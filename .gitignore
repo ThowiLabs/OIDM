@@ -16,6 +16,6 @@ CMakeUserPresets.json
 Thumbs.db
 
 # Crash dumps and local diagnostic files
-core
-core.*
+/core
+/core.*
 *.core
