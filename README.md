@@ -1,53 +1,42 @@
-# OIDM
+# OIDM — Open Internet Download Manager
 
-OIDM es un gestor de descargas de código abierto e independiente para Windows y Linux, desarrollado en C++20 y Qt 6.
+OIDM is an original, open-source download manager targeting Windows and Linux.
 
-No está afiliado a Tonec ni a Internet Download Manager. No contiene código, binarios, iconos ni recursos propietarios de otros productos.
+## Mandatory technology rule
 
-## Estado
+The desktop application is developed exclusively in **C++20 and Qt 6 Widgets**, with **CMake** as its build system and **SQLite through Qt SQL** for persistence. Qt Network is the current networking backend. Do not introduce Tauri, Electron, Rust, React, TypeScript, Node.js, or a web-based desktop shell. The binding engineering requirements are in [AGENTS.md](AGENTS.md).
 
-Alpha 0.1.0 — fundación en desarrollo. La primera versión incorpora la base de escritorio y un motor HTTP/HTTPS segmentado en los servidores que admiten Range. No pretende cubrir todavía toda la funcionalidad de un gestor maduro.
+## Current implementation status
 
-## Tecnologías
+Implemented:
+- Native Qt Widgets desktop window, toolbar, categories, download table, progress delegate, and add-download dialog.
+- SQLite-backed persistent download queue.
+- Nonblocking HTTP/HTTPS requests through Qt Network and a bounded 3-download queue.
+- Up to 8 simultaneous byte-range segments per eligible file, with independent temporary files and byte-accurate reconstruction.
+- Pausing, cancellation, legacy single-stream partial resume, and recovery of validated segment manifests.
+- Strict response range validation and fallback to a fresh transfer when a server ignores Range with `200 OK`.
+- Local integration tests for multi-segment reconstruction and segmented resume without re-downloading completed chunks.
+- Startup recovery that marks interrupted active records as paused.
 
-- C++20
-- Qt 6 Widgets
-- libcurl
-- SQLite
-- CMake
+Not implemented yet:
+- Adaptive connection tuning and benchmarked acceleration (actual speed-up depends on the server and connection).
+- FTP support, advanced proxy/SOCKS controls, authentication manager, scheduled queues, and speed limits.
+- Browser extensions and the C++ Native Messaging host.
+- HLS/DASH parsing, video detection, Link Grabber, and platform packaging.
 
-## Compilar en Debian/Ubuntu
+OIDM now has an initial working parallel segmented engine, verified against local HTTP test fixtures. This is **not yet full IDM feature parity**, and the actual speed increase depends on server limits, latency and available bandwidth. Large-file assembly and disk I/O performance still need optimization and stress tests.
 
-    sudo apt update
-    sudo apt install -y build-essential cmake ninja-build qt6-base-dev qt6-base-dev-tools libcurl4-openssl-dev libsqlite3-dev
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-    cmake --build build
-    ctest --test-dir build --output-on-failure
-    ./build/OIDM
+## Build on Linux
 
-## Compilar en Windows
+Requirements: CMake 3.25+, a C++20 compiler, Qt 6.6+ development packages (Core, Gui, Widgets, Network, Sql), and the Qt SQLite driver.
 
-La compilación oficial se realiza con GitHub Actions sobre Windows Server, MSVC 2022, Qt 6 y vcpkg. El workflow de .github/workflows/build.yml genera un ZIP portable que incluye el ejecutable, las DLL de Qt y las dependencias de terceros.
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+./build/oidm
+```
 
-Para desarrollo local se requiere Visual Studio 2022 (Desktop development with C++), CMake, Qt 6 Widgets y vcpkg con curl y sqlite3.
+## Build on Windows
 
-## Arquitectura
-
-- src/core: motor de transferencia, modelo y persistencia.
-- src/ui: interfaz Qt.
-- tests: pruebas unitarias.
-- contexto: decisiones y continuidad del proyecto.
-- tareas: alcance y estado de implementación.
-
-## Seguridad
-
-- Solo se aceptan URL HTTP y HTTPS en la primera versión.
-- Se rechazan esquemas locales y protocolos no habilitados.
-- Se limita el número de redirecciones.
-- Se restringen los protocolos permitidos también en redirecciones.
-- Las descargas se escriben en archivos temporales y se ensamblan al finalizar.
-- Los errores no deben registrar credenciales ni contenido descargado.
-
-## Licencia
-
-GPL-3.0-or-later. Consulta LICENSE.
+Use Qt 6.6+ with the MSVC or MinGW kit matching the compiler, CMake, and Ninja. Configure and build from the same CMake source tree. Windows deployment and portable packaging will be added after the core transfer and platform integration are validated.

@@ -1,11 +1,8 @@
 /build/
-/build-*/
-/dist/
-/out/
-/.cache/
+/cmake-build-*/
+CMakeUserPresets.json
 *.user
 *.suo
-*.vcxproj.user
 *.pdb
 *.ilk
 *.obj
@@ -14,10 +11,11 @@
 *.so
 *.dll
 *.exe
-*.part
-*.oidm.part.*
-*.db
-*.db-shm
-*.db-wal
+*.app/
 .DS_Store
 Thumbs.db
+
+# Crash dumps and local diagnostic files
+core
+core.*
+*.core

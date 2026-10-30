@@ -1,57 +1,64 @@
-# Fecha
-2026-10-30
+# OIDM — Contexto persistente
 
-# Objetivo
-Crear OIDM, un gestor de descargas de código abierto para Windows y Linux, con interfaz de escritorio y motor propio de transferencias segmentadas. Es un producto independiente; no está afiliado a Tonec ni reutiliza código, recursos gráficos o binarios propietarios de Internet Download Manager.
+Fecha de actualización: 2026-10-30
 
-# Decisiones tomadas
-- Lenguaje principal: C++20.
-- Interfaz: Qt 6 Widgets.
-- Sistema de build: CMake + Ninja.
-- HTTP/HTTPS: libcurl.
-- Persistencia: SQLite.
-- Concurrencia: std::thread / atomics y límites explícitos.
-- Primera entrega: aplicación de escritorio funcional con alta de URL, lista de descargas, pausa/reanudación/cancelación y descarga segmentada cuando el servidor admite HTTP Range.
-- Extensiones de navegador se desarrollarán como componente separado en una fase posterior.
-- La compilación Windows se hará en runner Windows con MSVC 2022 y Qt; no se simulará un .exe con una build Linux.
+## Objetivo
 
-# Arquitectura actual
-- src/core: modelo de descarga, motor de transferencias y persistencia SQLite.
-- src/ui: ventana principal y diálogos Qt.
-- tests: pruebas unitarias del planificador de segmentos y parser Content-Range.
-- packaging/windows: scripts de empaquetado.
-- .github/workflows: compilación automatizada Windows/Linux.
+Crear OIDM, un gestor de descargas original y de código abierto para Windows y Linux. El producto debe ser independiente de Internet Download Manager: no reutiliza binarios, código, recursos gráficos ni marcas de Tonec. La meta funcional es ofrecer descargas fiables, reanudables y aceleración segmentada cuando el servidor HTTP lo permita.
 
-# Librerías usadas
-- Qt 6 Widgets.
-- libcurl.
-- SQLite3.
-- C++20 standard library.
+## Decisiones técnicas vigentes
 
-# Archivos importantes modificados
-- Proyecto recién inicializado; ver CMakeLists.txt y carpetas src/.
+- Lenguaje: C++20.
+- UI: Qt 6 Widgets.
+- Red: Qt Network (`QNetworkAccessManager`).
+- Persistencia: SQLite mediante el driver `QSQLITE` de Qt SQL.
+- Build: CMake 3.25+ y Ninja.
+- Plataformas: Windows 10/11 x64 y Linux x86_64 inicialmente.
+- No usar Tauri, Electron, Rust, React, TypeScript, Node.js ni una shell web para la aplicación de escritorio.
+- Las extensiones WebExtensions serán el único componente JavaScript futuro y hablarán con un host nativo C++ mediante Native Messaging.
 
-# Problemas encontrados
-- El sandbox REA es Debian 13 y inicialmente no tenía CMake, Qt ni cabeceras de libcurl.
-- Se instalaron CMake 3.31.6, Ninja 1.12.1, Qt 6.8.2, libcurl 8.14.1 y SQLite 3.46.1 desde repositorios Debian.
-- La compilación Windows nativa no está disponible en este contenedor Linux; se utilizará GitHub Actions en Windows para generar el paquete real.
+## Arquitectura vigente
 
-# Soluciones implementadas
-- Toolchain Linux instalado.
-- Repositorio Git local y rama main inicializados.
-- Repositorio público ThowiLabs/OIDM creado para alojar el proyecto y ejecutar CI de Windows.
+- `src/core/download.*`: modelo de dominio y estados de descarga.
+- `src/core/download_repository.*`: persistencia SQLite y recuperación tras cierres inesperados.
+- `src/core/download_task.*`: trabajador asíncrono de red por descarga; debe admitir sondeo de rangos, segmentos paralelos, fallback secuencial, pausa, cancelación y reanudación.
+- `src/core/download_manager.*`: ciclo de vida, límite de descargas simultáneas y planificación de la cola.
+- `src/ui/`: ventana principal, diálogo de alta, modelo de tabla y delegado de progreso.
+- `tests/`: pruebas locales de protocolo, reanudación, fallback, estados y concurrencia. No depender de Internet para los tests.
+- `docs/ARCHITECTURE.md`: política de transferencia y decisiones de arquitectura.
 
-# Pendientes
-- Implementar el motor de descargas y persistencia.
-- Implementar la interfaz inicial.
-- Añadir pruebas de integración de descarga real.
-- Ejecutar build Linux y build Windows en CI.
-- Añadir extensión WebExtensions y host Native Messaging.
-- Completar funciones avanzadas de IDM de forma independiente.
+## Estado comprobado
 
-# Próximos pasos
-1. Implementar descarga HTTP/HTTPS segmentada con verificación de respuestas 206/Content-Range.
-2. Añadir persistencia y estados recuperables.
-3. Crear UI de escritorio.
-4. Compilar y probar Linux.
-5. Publicar build Windows de prueba mediante GitHub Actions.
+- La aplicación Qt compila en Debian 13 con Qt 6.8.2.
+- La inicialización de SQLite tiene una prueba smoke.
+- El motor secuencial HTTP/HTTPS tiene pruebas locales para descarga completa, reanudación por `Range`, servidor que ignora `Range`, `Content-Range` incorrecto y respuesta interrumpida.
+- Límite de tres descargas simultáneas y avance de cola: pruebas locales aprobadas.
+- Motor inicial de descarga segmentada (hasta 8 rangos por archivo): pruebas locales con contenido de 5 MiB y recuperación de fragmentos aprobadas.
+- Qt 6 Network corre asíncrono en el bucle de eventos; el ciclo de vida de QThread por descarga fue eliminado para evitar carreras de cierre.
+- CTest incluye pruebas de SQLite, Range HTTP, fallback, respuesta incorrecta, truncamiento, cola, reconstrucción y recuperación de segmentos.
+- Limitación: ensamblado de archivos grandes todavía puede bloquear transitoriamente la interfaz y no existe una build Windows validada.
+
+## Reglas de transferencia y seguridad
+
+- Aceptar solo HTTP/HTTPS en esta fase; rechazar URL inválidas y credenciales incrustadas.
+- No sobrescribir destinos existentes.
+- Guardar datos incompletos en temporales junto al destino; publicar el destino final solo al completar y verificar tamaños.
+- Nunca concatenar una respuesta `200 OK` completa a un temporal de reanudación.
+- Validar `206 Partial Content`, `Content-Range`, longitud y validadores del recurso antes de aceptar segmentos.
+- Si el servidor no confirma rangos o responde de forma inconsistente, detener los segmentos y hacer fallback secuencial desde cero.
+- Reanudar segmentos solo si la URL, tamaño y ETag/Last-Modified del manifiesto coinciden con el recurso actual.
+- No seguir redirecciones que reduzcan la seguridad de HTTPS a HTTP.
+- Mantener la red no bloqueante. Pendiente: descargar escrituras de reconstrucción grandes a un trabajador de E/S.
+
+## Entorno de desarrollo
+
+- Sandbox Debian 13.
+- Qt 6.8.2 instalado.
+- CMake y Ninja disponibles.
+- La build Windows real se validará en un runner Windows/MSVC; no se presentará una build Linux como ejecutable Windows.
+
+## Repositorio
+
+- Remoto configurado: `https://github.com/ThowiLabs/OIDM.git`.
+- Rama de trabajo: `main`.
+- El historial inicial existente se conserva; no reinicializar Git ni reescribir commits.

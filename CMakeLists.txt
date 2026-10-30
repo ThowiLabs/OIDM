@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
 
 project(OIDM
     VERSION 0.1.0
-    DESCRIPTION "Open-source download manager for Windows and Linux"
+    DESCRIPTION "Open Internet Download Manager"
+    HOMEPAGE_URL "https://github.com/ThowiLabs/OIDM"
     LANGUAGES CXX
 )
 
@@ -10,77 +11,84 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets)
-find_package(CURL REQUIRED)
-find_package(SQLite3 REQUIRED)
-find_package(Threads REQUIRED)
+include(GNUInstallDirs)
+include(CTest)
 
-qt_standard_project_setup()
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
-qt_add_executable(OIDM
+qt_standard_project_setup(REQUIRES 6.6)
+
+add_executable(oidm WIN32 MACOSX_BUNDLE
     src/main.cpp
-    src/core/DownloadInfo.h
-    src/core/DownloadEngine.h
-    src/core/DownloadEngine.cpp
-    src/core/DownloadRepository.h
-    src/core/DownloadRepository.cpp
-    src/ui/AddDownloadDialog.h
-    src/ui/AddDownloadDialog.cpp
-    src/ui/MainWindow.h
-    src/ui/MainWindow.cpp
+    src/core/download.h
+    src/core/download.cpp
+    src/core/download_repository.h
+    src/core/download_repository.cpp
+    src/core/download_task.h
+    src/core/download_task.cpp
+    src/core/download_manager.h
+    src/core/download_manager.cpp
+    src/ui/download_table_model.h
+    src/ui/download_table_model.cpp
+    src/ui/progress_delegate.h
+    src/ui/progress_delegate.cpp
+    src/ui/add_download_dialog.h
+    src/ui/add_download_dialog.cpp
+    src/ui/main_window.h
+    src/ui/main_window.cpp
 )
 
-target_include_directories(OIDM PRIVATE src)
-target_link_libraries(OIDM PRIVATE
+target_include_directories(oidm PRIVATE src)
+target_link_libraries(oidm PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
-    CURL::libcurl
-    SQLite::SQLite3
-    Threads::Threads
+    Qt6::Network
+    Qt6::Sql
 )
-
-target_compile_definitions(OIDM PRIVATE
-    OIDM_VERSION="\${PROJECT_VERSION}"
+target_compile_definitions(oidm PRIVATE
+    OIDM_VERSION="${PROJECT_VERSION}"
     QT_NO_CAST_FROM_ASCII
     QT_NO_CAST_TO_ASCII
 )
 
 if(MSVC)
-    target_compile_options(OIDM PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(oidm PRIVATE /W4 /permissive- /Zc:__cplusplus)
 else()
-    target_compile_options(OIDM PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+    target_compile_options(oidm PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
 endif()
 
-set_target_properties(OIDM PROPERTIES
-    WIN32_EXECUTABLE TRUE
-    MACOSX_BUNDLE FALSE
-    OUTPUT_NAME "OIDM"
-)
-
-include(GNUInstallDirs)
-install(TARGETS OIDM
-    RUNTIME DESTINATION \${CMAKE_INSTALL_BINDIR}
+install(TARGETS oidm
     BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-include(CTest)
 if(BUILD_TESTING)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
-    qt_add_executable(oidm_engine_tests
-        tests/engine_tests.cpp
-        src/core/DownloadEngine.h
-        src/core/DownloadEngine.cpp
+    add_test(NAME oidm_smoke COMMAND oidm --self-test)
+    set_tests_properties(oidm_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
+    qt_add_executable(oidm_download_tests
+        tests/download_task_tests.cpp
+        src/core/download.h
+        src/core/download.h
+        src/core/download.cpp
+        src/core/download_task.h
+        src/core/download_task.cpp
+        src/core/download_manager.h
+        src/core/download_manager.cpp
+        src/core/download_repository.h
+        src/core/download_repository.cpp
     )
-    target_include_directories(oidm_engine_tests PRIVATE src)
-    target_link_libraries(oidm_engine_tests PRIVATE
+    target_include_directories(oidm_download_tests PRIVATE src)
+    target_link_libraries(oidm_download_tests PRIVATE
         Qt6::Core
+        Qt6::Network
+        Qt6::Sql
         Qt6::Test
-        CURL::libcurl
-        Threads::Threads
     )
-    add_test(NAME oidm_engine_tests COMMAND oidm_engine_tests)
+    add_test(NAME oidm_download_tests COMMAND oidm_download_tests)
 endif()
