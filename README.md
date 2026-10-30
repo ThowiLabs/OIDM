@@ -17,11 +17,13 @@ Implemented:
 - Strict response range validation and fallback to a fresh transfer when a server ignores Range with `200 OK`.
 - Local integration tests for multi-segment reconstruction and segmented resume without re-downloading completed chunks.
 - Startup recovery that marks interrupted active records as paused.
+- A C++ Native Messaging host and a Chromium MV3 context-menu extension (Chrome/Edge/Chromium) for explicitly sending HTTP/HTTPS links to OIDM.
+- User-level Native Messaging registration through `oidm-native-host --register-chromium EXTENSION_ID`.
 
 Not implemented yet:
 - Adaptive connection tuning and benchmarked acceleration (actual speed-up depends on the server and connection).
 - FTP support, advanced proxy/SOCKS controls, authentication manager, scheduled queues, and speed limits.
-- Browser extensions and the C++ Native Messaging host.
+- Automatic interception of browser downloads and Firefox integration (first Chromium extension and native host exist).
 - HLS/DASH parsing, video detection, Link Grabber, and platform packaging.
 
 OIDM now has an initial working parallel segmented engine, verified against local HTTP test fixtures. This is **not yet full IDM feature parity**, and the actual speed increase depends on server limits, latency and available bandwidth. Large-file assembly and disk I/O performance still need optimization and stress tests.
@@ -40,3 +42,15 @@ ctest --test-dir build --output-on-failure
 ## Build on Windows
 
 Use Qt 6.6+ with the MSVC or MinGW kit matching the compiler, CMake, and Ninja. Configure and build from the same CMake source tree. Windows deployment and portable packaging will be added after the core transfer and platform integration are validated.
+
+## Browser extension (preview)
+
+Build both executables and keep `oidm` and `oidm-native-host` in the same directory. Load `extension/chromium` unpacked in Chrome, Chromium, or Edge with Developer mode enabled. Copy the browser-assigned extension ID (32 lowercase letters `a` through `p`) and register it for the current user:
+
+```bash
+./build/oidm-native-host --register-chromium YOUR_EXTENSION_ID
+```
+
+Restart the browser if needed, then use **Descargar con OIDM** from the context menu of a link. See [`extension/README.md`](extension/README.md) for platform-specific details. The native-host protocol has been exercised end-to-end with the Linux Qt desktop application, a local test HTTP server, and SQLite. The extension itself has not yet been verified through a real browser installation.
+
+**License:** GNU General Public License version 3; see `LICENSE`.

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "OIDM — Open Download Manager",
+  "version": "0.1.0",
+  "description": "Envía enlaces de descarga a OIDM, el gestor de descargas abierto en C++ y Qt.",
+  "permissions": [
+    "contextMenus",
+    "nativeMessaging",
+    "notifications"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "OIDM — Open Download Manager"
+  },
+  "icons": {
+    "16": "icons/oidm-16.png",
+    "48": "icons/oidm-48.png",
+    "128": "icons/oidm-128.png"
+  }
+}

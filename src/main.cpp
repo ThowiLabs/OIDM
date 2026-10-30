@@ -1,141 +1,17 @@
 #include "core/download_repository.h"
 #include "ui/main_window.h"
+#include "integration/native_bridge.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QStandardPaths>
 #include <QTemporaryDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QElapsedTimer>
-#include <QEventLoop>
-#include <QHostAddress>
-#include <QRegularExpression>
-#include <QTcpServer>
-#include <QTcpSocket>
-#include <QTimer>
-#include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocalSocket>
 
 namespace {
 using namespace oidm;
-
-bool runTransferScenario(const QString &root, const QByteArray &payload,
-                         const bool ignoreRange, const bool wrongRange,
-                         const QString &caseName)
-{
-    QTcpServer server;
-    if (!server.listen(QHostAddress::LocalHost)) return false;
-
-    QObject::connect(&server, &QTcpServer::newConnection, &server, [&server, payload, ignoreRange, wrongRange] {
-        while (server.hasPendingConnections()) {
-            QTcpSocket *socket = server.nextPendingConnection();
-            auto *requestBuffer = new QByteArray();
-            QObject::connect(socket, &QTcpSocket::readyRead, socket,
-                             [socket, requestBuffer, payload, ignoreRange, wrongRange] {
-                *requestBuffer += socket->readAll();
-                if (!requestBuffer->contains(QByteArrayLiteral("\r\n\r\n"))) return;
-
-                const QRegularExpression rangeExpression(
-                    QStringLiteral("(?:^|\\r\\n)Range:\\s*bytes=(\\d+)-(\\d+)?"),
-                    QRegularExpression::CaseInsensitiveOption);
-                const auto match = rangeExpression.match(QString::fromLatin1(*requestBuffer));
-                const bool requestedRange = match.hasMatch();
-                const qint64 requestedStart = requestedRange ? match.captured(1).toLongLong() : 0;
-                const qint64 requestedEnd = requestedRange && !match.captured(2).isEmpty()
-                    ? match.captured(2).toLongLong() : static_cast<qint64>(payload.size() - 1);
-                QByteArray body;
-                QByteArray response;
-
-                if (requestedRange && !ignoreRange) {
-                    const qint64 responseStart = wrongRange ? requestedStart + 1 : requestedStart;
-                    const qint64 end = qMin(requestedEnd, static_cast<qint64>(payload.size() - 1));
-                    body = end >= responseStart
-                        ? payload.mid(static_cast<qsizetype>(responseStart), static_cast<qsizetype>(end - responseStart + 1))
-                        : QByteArray{};
-                    response = QByteArrayLiteral("HTTP/1.1 206 Partial Content\r\n")
-                        + QByteArrayLiteral("Content-Type: application/octet-stream\r\n")
-                        + QByteArrayLiteral("Accept-Ranges: bytes\r\n")
-                        + QByteArrayLiteral("Content-Range: bytes ") + QByteArray::number(responseStart)
-                        + QByteArrayLiteral("-") + QByteArray::number(end)
-                        + QByteArrayLiteral("/") + QByteArray::number(payload.size()) + QByteArrayLiteral("\r\n")
-                        + QByteArrayLiteral("Content-Length: ") + QByteArray::number(body.size())
-                        + QByteArrayLiteral("\r\nConnection: close\r\n\r\n");
-                } else {
-                    body = payload;
-                    response = QByteArrayLiteral("HTTP/1.1 200 OK\r\n")
-                        + QByteArrayLiteral("Content-Type: application/octet-stream\r\n")
-                        + QByteArrayLiteral("Accept-Ranges: bytes\r\n")
-                        + QByteArrayLiteral("Content-Length: ") + QByteArray::number(body.size())
-                        + QByteArrayLiteral("\r\nConnection: close\r\n\r\n");
-                }
-                response += body;
-                socket->write(response);
-                socket->disconnectFromHost();
-                delete requestBuffer;
-            });
-        }
-    });
-
-    DownloadRepository repository(QDir(root).filePath(caseName + QStringLiteral(".sqlite3")));
-    if (!repository.isOpen()) return false;
-
-    Download item;
-    item.id = caseName;
-    item.url = QUrl(QStringLiteral("http://127.0.0.1:%1/payload.bin").arg(server.serverPort())).toString();
-    item.destination = QDir(root).filePath(caseName + QStringLiteral(".bin"));
-    item.fileName = caseName + QStringLiteral(".bin");
-    item.status = DownloadStatus::Paused;
-    item.createdAt = QDateTime::currentDateTimeUtc();
-    item.updatedAt = item.createdAt;
-
-    QFile partial(item.destination + QStringLiteral(".oidm-part"));
-    if (!partial.open(QIODevice::WriteOnly)) return false;
-    const QByteArray prefix = payload.left(7);
-    if (partial.write(prefix) != prefix.size()) return false;
-    partial.close();
-    item.downloadedBytes = prefix.size();
-    item.totalBytes = payload.size();
-
-    QString error;
-    if (!repository.insert(item, &error)) return false;
-    DownloadManager manager(&repository);
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&manager, &DownloadManager::downloadFinished, &loop,
-                     [&loop, &timeout, caseName](const Download &finished) {
-        if (finished.id == caseName) {
-            timeout.stop();
-            loop.quit();
-        }
-    });
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    if (!manager.start(item.id, &error)) return false;
-    timeout.start(5000);
-    loop.exec();
-
-    QElapsedTimer cleanupTimer;
-    cleanupTimer.start();
-    while (manager.isActive(item.id) && cleanupTimer.elapsed() < 3000) {
-        QEventLoop cleanupLoop;
-        QTimer::singleShot(20, &cleanupLoop, &QEventLoop::quit);
-        cleanupLoop.exec();
-    }
-
-    const QVector<Download> records = repository.all(&error);
-    if (records.size() != 1) return false;
-    const bool shouldSucceed = !wrongRange;
-    if (shouldSucceed) {
-        if (records.first().status != DownloadStatus::Completed) return false;
-        QFile result(item.destination);
-        if (!result.open(QIODevice::ReadOnly)) return false;
-        if (result.readAll() != payload) return false;
-    } else {
-        if (records.first().status != DownloadStatus::Failed) return false;
-        if (QFileInfo::exists(item.destination)) return false;
-    }
-    return !manager.isActive(item.id);
-}
 
 int runSelfTest()
 {
@@ -168,10 +44,7 @@ int runSelfTest()
         if (!repository.all(&error).isEmpty()) return 18;
     }
 
-    const QByteArray payload = QByteArrayLiteral("OIDM Qt range-resume integration test payload");
-    if (!runTransferScenario(temporary.path(), payload, false, false, QStringLiteral("valid-range"))) return 20;
-    if (!runTransferScenario(temporary.path(), payload, true, false, QStringLiteral("ignored-range"))) return 21;
-    if (!runTransferScenario(temporary.path(), payload, false, true, QStringLiteral("invalid-range"))) return 22;
+    // Detailed HTTP transport tests live in oidm_download_tests (QtTest).
     return 0;
 }
 } // namespace
@@ -197,6 +70,27 @@ int main(int argc, char *argv[])
     if (!repository.recoverInterrupted(&recoveryError)) return 3;
 
     oidm::MainWindow window(&repository);
+    oidm::NativeBridge bridge(&window);
+    QObject::connect(&bridge, &oidm::NativeBridge::enqueueRequested, &window,
+        [&window](const QString &url, const QString &suggestedName,
+                  const QString &requestId, QObject *replyTarget) {
+            auto *socket = qobject_cast<QLocalSocket *>(replyTarget);
+            if (!socket) return;
+            QString id;
+            QString error;
+            const bool ok = window.enqueueFromBrowser(url, suggestedName, &id, &error);
+            QJsonObject response;
+            response.insert(QStringLiteral("ok"), ok);
+            response.insert(QStringLiteral("requestId"), requestId);
+            response.insert(ok ? QStringLiteral("result") : QStringLiteral("error"), ok ? id : error);
+            socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+            socket->flush();
+            socket->disconnectFromServer();
+        });
+    QString bridgeError;
+    if (!bridge.start(&bridgeError)) {
+        qWarning("OIDM Native Messaging bridge unavailable: %s", qPrintable(bridgeError));
+    }
     window.show();
     return application.exec();
 }

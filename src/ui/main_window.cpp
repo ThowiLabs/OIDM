@@ -7,6 +7,11 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QFileInfo>
+#include <QDir>
+#include <QStandardPaths>
+#include <QRegularExpression>
+#include <QUrl>
+#include <QUuid>
 #include <QHeaderView>
 #include <QKeySequence>
 #include <QLabel>
@@ -176,6 +181,74 @@ QString MainWindow::selectedDownloadId() const
     const QModelIndex current = m_table->currentIndex();
     if (!current.isValid()) return {};
     return current.data(Qt::UserRole).toString();
+}
+
+bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &suggestedName,
+                                    QString *id, QString *error)
+{
+    const QUrl url(urlText);
+    if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty()
+        || (url.scheme() != QStringLiteral("http") && url.scheme() != QStringLiteral("https"))) {
+        if (error) *error = tr("Enlace HTTP/HTTPS no válido o con credenciales incrustadas.");
+        return false;
+    }
+    QString name = suggestedName.isEmpty() ? url.fileName(QUrl::FullyDecoded) : suggestedName;
+    if (name.size() > 160) name.truncate(160);
+    name.replace(QRegularExpression(QStringLiteral("[\\/:*?\"<>|\x00-\x1F]")), QStringLiteral("_"));
+    name = name.trimmed().trimmed();
+    while (name.endsWith(QLatin1Char('.'))) name.chop(1);
+    if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral("..")) {
+        name = QStringLiteral("download.bin");
+    }
+    const QString basename = name.section(QLatin1Char('.'), 0, 0).toUpper();
+    const QStringList reserved{QStringLiteral("CON"), QStringLiteral("PRN"), QStringLiteral("AUX"),
+        QStringLiteral("NUL"), QStringLiteral("COM1"), QStringLiteral("COM2"), QStringLiteral("LPT1")};
+    if (reserved.contains(basename)) name.prepend(QLatin1Char('_'));
+
+    QString folder = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (folder.isEmpty()) folder = QDir::homePath();
+    if (!QDir().mkpath(folder)) {
+        if (error) *error = tr("No se pudo crear la carpeta de descargas.");
+        return false;
+    }
+    const QString stem = QFileInfo(name).completeBaseName();
+    const QString suffix = QFileInfo(name).completeSuffix();
+    QString destination;
+    const auto records = m_repository ? m_repository->all() : QVector<Download>{};
+    for (int i = 0; i < 10000; ++i) {
+        const QString candidate = i == 0 ? name
+            : (stem + QStringLiteral(" (%1)").arg(i)
+                + (suffix.isEmpty() ? QString{} : QLatin1Char('.') + suffix));
+        const QString path = QDir(folder).filePath(candidate);
+        bool used = QFileInfo::exists(path)
+            || QFileInfo::exists(path + QStringLiteral(".oidm-part"))
+            || QFileInfo::exists(path + QStringLiteral(".oidm-parts"));
+        for (const auto &existing : records) {
+            if (existing.destination == path) { used = true; break; }
+        }
+        if (!used) { destination = path; break; }
+    }
+    if (destination.isEmpty()) {
+        if (error) *error = tr("No se encontró un nombre de archivo disponible.");
+        return false;
+    }
+
+    Download download;
+    download.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    download.url = url.toString(QUrl::FullyEncoded);
+    download.destination = destination;
+    download.fileName = QFileInfo(destination).fileName();
+    download.status = DownloadStatus::Queued;
+    download.createdAt = QDateTime::currentDateTimeUtc();
+    download.updatedAt = download.createdAt;
+    if (!m_repository || !m_repository->insert(download, error)) return false;
+    m_model->upsert(download);
+    if (id) *id = download.id;
+    QString ignored;
+    if (!m_manager->start(download.id, &ignored)) {
+        statusBar()->showMessage(tr("Descarga en cola: %1").arg(ignored), 4000);
+    }
+    return true;
 }
 
 void MainWindow::addDownload()

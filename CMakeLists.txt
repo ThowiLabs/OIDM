@@ -23,6 +23,8 @@ qt_standard_project_setup(REQUIRES 6.6)
 
 add_executable(oidm WIN32 MACOSX_BUNDLE
     src/main.cpp
+    src/integration/native_bridge.h
+    src/integration/native_bridge.cpp
     src/core/download.h
     src/core/download.cpp
     src/core/download_repository.h
@@ -40,6 +42,17 @@ add_executable(oidm WIN32 MACOSX_BUNDLE
     src/ui/main_window.h
     src/ui/main_window.cpp
 )
+
+add_executable(oidm-native-host
+    src/integration/native_host.cpp
+    src/integration/native_bridge.h
+    src/integration/native_bridge.cpp
+)
+target_include_directories(oidm-native-host PRIVATE src)
+target_link_libraries(oidm-native-host PRIVATE Qt6::Core Qt6::Network)
+if(WIN32)
+    target_link_libraries(oidm-native-host PRIVATE advapi32)
+endif()
 
 target_include_directories(oidm PRIVATE src)
 target_link_libraries(oidm PRIVATE
@@ -60,6 +73,8 @@ if(MSVC)
 else()
     target_compile_options(oidm PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
 endif()
+
+install(TARGETS oidm-native-host RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(TARGETS oidm
     BUNDLE DESTINATION .

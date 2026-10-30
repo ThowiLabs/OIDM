@@ -18,7 +18,7 @@ namespace oidm {
 namespace {
 
 constexpr qint64 kMinimumParallelBytes = 4LL * 1024LL * 1024LL;
-constexpr qint64 kTargetSegmentBytes = 4LL * 1024LL * 1024LL;
+constexpr qint64 kTargetSegmentBytes = 1LL * 1024LL * 1024LL;
 constexpr int kMaximumSegments = 8;
 constexpr qint64 kProgressIntervalMs = 180;
 constexpr qint64 kManifestIntervalMs = 1000;
@@ -252,7 +252,12 @@ void DownloadTask::onProbeMetadataChanged()
     const bool validRange = parseContentRange(contentRange, &range)
         && range.start == 0 && range.end == 0 && range.total > 0;
     const bool hasStableValidator = !strongEtag(m_etag).isEmpty() || !m_lastModified.isEmpty();
-    if (!validRange || !validLength || !hasStableValidator) {
+    if (!validRange || !validLength) {
+        fail(tr("El servidor devolvió una respuesta de rango inválida durante la comprobación."));
+        reply->abort();
+        return;
+    }
+    if (!hasStableValidator) {
         m_fallbackRequested = true;
         reply->abort();
         return;
@@ -264,7 +269,7 @@ void DownloadTask::onProbeMetadataChanged()
 
 void DownloadTask::onProbeReadyRead()
 {
-    if (m_terminal || m_probeReply.isNull() || m_fallbackRequested) return;
+    if (m_terminal || m_probeReply.isNull() || !m_probeReply->isOpen() || m_fallbackRequested) return;
     m_probeData.append(m_probeReply->readAll());
     if (m_probeData.size() > 1) {
         m_fallbackRequested = true;
@@ -280,8 +285,10 @@ void DownloadTask::onProbeFinished()
 {
     if (m_terminal) return;
     QNetworkReply *reply = m_probeReply.data();
+    const QNetworkReply::NetworkError probeError = reply != nullptr ? reply->error() : QNetworkReply::NoError;
+    const QString probeErrorText = reply != nullptr ? reply->errorString() : QString();
     if (reply != nullptr) {
-        m_probeData.append(reply->readAll());
+        if (reply->isOpen() && reply->bytesAvailable() > 0) m_probeData.append(reply->readAll());
         m_probeReply = nullptr;
         reply->deleteLater();
     }
@@ -308,9 +315,9 @@ void DownloadTask::onProbeFinished()
         return;
     }
 
-    if (reply != nullptr && reply->error() != QNetworkReply::NoError
-        && reply->error() != QNetworkReply::OperationCanceledError) {
-        fail(reply->errorString());
+    if (probeError != QNetworkReply::NoError
+        && probeError != QNetworkReply::OperationCanceledError) {
+        fail(probeErrorText);
         return;
     }
     startSingleStream(false);
@@ -320,7 +327,7 @@ int DownloadTask::chooseSegmentCount(const qint64 totalBytes) const
 {
     if (totalBytes < kMinimumParallelBytes) return 1;
     const qint64 count = (totalBytes + kTargetSegmentBytes - 1) / kTargetSegmentBytes;
-    return static_cast<int>(qBound<qint64>(2, count, kMaximumSegments));
+    return static_cast<int>(std::clamp<qint64>(count, 2, kMaximumSegments));
 }
 
 bool DownloadTask::manifestMatchesProbe() const
@@ -596,7 +603,7 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
         if (!segment.file->flush() && !m_pauseRequested && !m_cancelRequested) {
             const QString error = segment.file->errorString();
             if (reply != nullptr) reply->deleteLater();
-            fail(tr("No se pudo guardar el segmento %1: %2").arg(index + 1, error));
+            fail(tr("No se pudo guardar el segmento %1: %2").arg(index + 1).arg(error));
             return;
         }
         segment.file->close();
@@ -616,7 +623,11 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
         return;
     }
     if (m_pauseRequested) {
-        saveManifest();
+        if (reply != nullptr && segment.headersValidated && reply->isOpen()) {
+            readSegmentData(index, reply);
+            if (m_terminal) return;
+        }
+        (void)saveManifest();
         if (!pending) {
             updateProgress(true);
             finish(DownloadStatus::Paused);
@@ -981,7 +992,9 @@ void DownloadTask::updateProgress(const bool force)
     if (force || progressElapsed >= kProgressIntervalMs) {
         m_download.updatedAt = QDateTime::currentDateTimeUtc();
         emit updated(m_download);
-        if (m_segmented && progressElapsed >= kManifestIntervalMs) saveManifest();
+        if (progressElapsed >= kManifestIntervalMs && (m_segmented || !m_singleReply.isNull())) {
+            saveManifest();
+        }
         m_progressTimer.restart();
     }
 }

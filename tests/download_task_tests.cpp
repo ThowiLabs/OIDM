@@ -13,12 +13,14 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QUuid>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <algorithm>
 
 using namespace oidm;
 
@@ -133,7 +135,8 @@ private:
                                   "Content-Range: bytes */" + QByteArray::number(m_body.size()) + "\r\n", {});
                 break;
             }
-            const qint64 start = m_behavior == Behavior::WrongRange ? offset + 1 : offset;
+            const bool isProbe = offset == 0 && requestedEnd == 0;
+            const qint64 start = m_behavior == Behavior::WrongRange && !isProbe ? offset + 1 : offset;
             const qint64 end = requestedEnd >= 0 ? qMin(requestedEnd, static_cast<qint64>(m_body.size() - 1))
                                                    : static_cast<qint64>(m_body.size() - 1);
             const QByteArray partial = end >= start
@@ -259,6 +262,25 @@ QByteArray readFile(const QString &path)
     return file.readAll();
 }
 
+bool writeSingleManifest(const QString &destination, const QString &url, const qint64 totalBytes)
+{
+    const QString directory = destination + QStringLiteral(".oidm-parts");
+    if (!QDir().mkpath(directory)) return false;
+    QJsonObject manifest;
+    manifest.insert(QStringLiteral("version"), 1);
+    manifest.insert(QStringLiteral("url"), url);
+    manifest.insert(QStringLiteral("effectiveUrl"), url);
+    manifest.insert(QStringLiteral("totalBytes"), static_cast<double>(totalBytes));
+    manifest.insert(QStringLiteral("mode"), QStringLiteral("single"));
+    manifest.insert(QStringLiteral("etag"), QStringLiteral("\"oidm-test-v1\""));
+    manifest.insert(QStringLiteral("lastModified"), QString{});
+    manifest.insert(QStringLiteral("contentType"), QStringLiteral("application/octet-stream"));
+    QFile file(QDir(directory).filePath(QStringLiteral("manifest.json")));
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    const QByteArray json = QJsonDocument(manifest).toJson(QJsonDocument::Compact);
+    return file.write(json) == json.size();
+}
+
 } // namespace
 
 class DownloadTaskTests final : public QObject {
@@ -327,6 +349,29 @@ void DownloadTaskTests::segmentedTransfersReassembleLargeFiles()
             && request.toLower().contains(QByteArrayLiteral("range: bytes="))) ++segments;
     }
     QVERIFY2(segments >= 4, "The engine did not issue multiple bounded requests");
+    QVERIFY2(server.maxConcurrentConnections() >= 2,
+        qPrintable(QStringLiteral("Expected overlapping segment requests; max connections was %1")
+            .arg(server.maxConcurrentConnections())));
+
+    QList<QPair<qint64, qint64>> ranges;
+    const QRegularExpression rangePattern(QStringLiteral("(?im)^range:\s*bytes=(\d+)-(\d+)"));
+    for (const QByteArray &request : server.requests()) {
+        const auto match = rangePattern.match(QString::fromLatin1(request));
+        QVERIFY(match.hasMatch());
+        const qint64 start = match.captured(1).toLongLong();
+        const qint64 end = match.captured(2).toLongLong();
+        if (start == 0 && end == 0) continue; // capability probe
+        ranges.push_back({start, end});
+    }
+    std::sort(ranges.begin(), ranges.end(), [](const auto &left, const auto &right) {
+        return left.first < right.first;
+    });
+    QVERIFY(!ranges.isEmpty());
+    QCOMPARE(ranges.first().first, qint64{1});
+    for (qsizetype index = 1; index < ranges.size(); ++index) {
+        QCOMPARE(ranges.at(index - 1).second + 1, ranges.at(index).first);
+    }
+    QCOMPARE(ranges.last().second, static_cast<qint64>(body.size() - 1));
     QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
 }
 
@@ -343,15 +388,15 @@ void DownloadTaskTests::segmentedTransferResumesSavedFragments()
     const QString destination = temporary.filePath(QStringLiteral("recover.bin"));
     const QString partsDirectory = destination + QStringLiteral(".oidm-parts");
     QVERIFY(QDir().mkpath(partsDirectory));
-    constexpr int count = 5;
+    constexpr int count = 6;
     const qint64 base = body.size() / count;
     const qint64 remainder = body.size() % count;
     auto segmentStart = [&](int index) {
         return static_cast<qint64>(index) * base + qMin<qint64>(index, remainder);
     };
     const qint64 firstBytes = 35031;
-    const QString firstPart = partsDirectory + QStringLiteral("/segment_00.part");
-    const QString secondPart = partsDirectory + QStringLiteral("/segment_01.part");
+    const QString firstPart = partsDirectory + QStringLiteral("/segment-0000.part");
+    const QString secondPart = partsDirectory + QStringLiteral("/segment-0001.part");
     {
         QFile part(firstPart);
         QVERIFY(part.open(QIODevice::WriteOnly));
@@ -373,6 +418,22 @@ void DownloadTaskTests::segmentedTransferResumesSavedFragments()
     manifest.insert(QStringLiteral("etag"), QStringLiteral("\"oidm-test-v1\""));
     manifest.insert(QStringLiteral("lastModified"), QString{});
     manifest.insert(QStringLiteral("contentType"), QStringLiteral("application/octet-stream"));
+    manifest.insert(QStringLiteral("effectiveUrl"), server.url());
+    manifest.insert(QStringLiteral("mode"), QStringLiteral("segments"));
+    QJsonArray segments;
+    for (int index = 0; index < count; ++index) {
+        const qint64 start = segmentStart(index);
+        const qint64 length = base + (index < remainder ? 1 : 0);
+        const qint64 downloaded = index == 0 ? firstBytes : (index == 1 ? length : 0);
+        QJsonObject segment;
+        segment.insert(QStringLiteral("index"), index);
+        segment.insert(QStringLiteral("start"), start);
+        segment.insert(QStringLiteral("end"), start + length - 1);
+        segment.insert(QStringLiteral("downloaded"), downloaded);
+        segment.insert(QStringLiteral("complete"), downloaded == length);
+        segments.append(segment);
+    }
+    manifest.insert(QStringLiteral("segments"), segments);
     QFile record(partsDirectory + QStringLiteral("/manifest.json"));
     QVERIFY(record.open(QIODevice::WriteOnly));
     const QByteArray json = QJsonDocument(manifest).toJson();
@@ -417,6 +478,7 @@ void DownloadTaskTests::resumesFromValidatedRange()
     QVERIFY(partial.open(QIODevice::WriteOnly));
     QCOMPARE(partial.write(prefix), static_cast<qint64>(prefix.size()));
     partial.close();
+    QVERIFY(writeSingleManifest(destination, server.url(), body.size()));
 
     DownloadTask task(makeDownload(server.url(), destination));
     QSignalSpy finished(&task, &DownloadTask::finished);
@@ -472,6 +534,7 @@ void DownloadTaskTests::rejectsMismatchedContentRange()
     QVERIFY(partial.open(QIODevice::WriteOnly));
     QCOMPARE(partial.write(prefix), static_cast<qint64>(prefix.size()));
     partial.close();
+    QVERIFY(writeSingleManifest(destination, server.url(), body.size()));
 
     DownloadTask task(makeDownload(server.url(), destination));
     QSignalSpy finished(&task, &DownloadTask::finished);

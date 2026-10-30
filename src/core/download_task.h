@@ -65,7 +65,7 @@ private:
     void finalizeSegments();
     void finalizeSingleStream();
     void updateProgress(bool force = false);
-    [[nodiscard]] bool saveManifest();
+    void saveManifest();
     void clearSegmentDirectory();
     void fail(const QString &error);
     void finish(DownloadStatus status, const QString &error = {});

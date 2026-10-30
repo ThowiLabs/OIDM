@@ -11,7 +11,10 @@ La aplicación de escritorio usa C++20, Qt 6 Widgets, Qt Network y Qt SQL. SQLit
 - `src/core/download_task.*`: trabajador de red asíncrono; sondeo de capacidades, transferencias segmentadas, fallback secuencial, manifiesto, pausa y cancelación.
 - `src/core/download_manager.*`: ciclo de vida de trabajadores, cola y límite global de concurrencia.
 - `src/ui/`: ventana Qt, diálogo de alta, modelo de tabla y delegado de progreso.
-- `src/browser/` (futuro): host C++ Native Messaging para extensiones Chromium y Firefox.
+- `src/integration/native_host.cpp`: ejecutable nativo C++ independiente que recibe mensajes WebExtensions (tramas JSON de longitud little-endian de 32 bits).
+- `src/integration/native_bridge.*`: servidor local Qt (QLocalServer, socket exclusivo del usuario) entre el host y la interfaz gráfica.
+- `extension/chromium/`: extensión Manifest V3 con menú contextual para enviar enlaces HTTP/HTTPS seleccionados expresamente por el usuario.
+- Firefox y detección automática de vídeos: pendientes.
 - `src/platform/` (futuro): integración con Windows/Linux y empaquetado.
 
 El motor utiliza llamadas asíncronas a `QNetworkAccessManager` en el bucle de eventos de Qt; no crea hilos adicionales por transferencia. Las operaciones de red no bloquean la interfaz. **Limitación conocida**: la reconstrucción de ficheros y algunas escrituras a disco se realizan sin un trabajador de E/S dedicado y deberán migrarse a una tarea de disco antes de manejar ficheros enormes en producción. Las señales de Qt mantienen actualizado el modelo de descargas.
@@ -39,7 +42,7 @@ SQLite conserva la entidad y el estado visible. El manifiesto de segmentos conse
 
 - HTTP/HTTPS únicamente en la primera fase.
 - Redirecciones sin downgrade HTTPS a HTTP.
-- No incluir credenciales en registros ni diagnósticos. Pendiente: rechazo explícito y gestión segura de `userinfo` incrustado en URLs.
+- No incluir credenciales en registros ni diagnósticos. URLs con userinfo rechazadas por el motor y puente nativo; protección adicional de logs e historial queda por auditar.
 - No sobrescribir destinos existentes.
 - Pendiente: endurecer la creación de archivos temporales frente a enlaces simbólicos y carreras de ruta.
 - Mantener temporales dentro de la carpeta de destino elegida.
@@ -52,3 +55,13 @@ SQLite conserva la entidad y el estado visible. El manifiesto de segmentos conse
 - Linux x86_64 primero.
 - AppImage y paquetes nativos se validarán después de resolver plugins y dependencias Qt.
 - Las extensiones Chromium/Firefox se comunicarán con un host nativo C++ separado.
+
+## Integración con navegadores (fase inicial)
+
+1. La extensión Chromium requiere permisos mínimos `contextMenus`, `nativeMessaging` y `notifications`. No solicita `cookies`, `webRequest`, `tabs` ni `host_permissions`.
+2. El navegador invoca `com.thowilabs.oidm` mediante Native Messaging con un mensaje JSON de tamaño limitado.
+3. El host C++ valida el tipo de operación y transmite la solicitud a la aplicación mediante `QLocalSocket` y `QLocalServer::UserAccessOption`.
+4. La interfaz comprueba que el enlace sea HTTP/HTTPS sin credenciales, desinfecta el nombre, reserva un nombre libre en Descargas y añade la tarea a SQLite.
+5. El host devuelve el ID de la tarea como confirmación.
+
+La integración end-to-end se comprobó en Linux desde un cliente de prueba hasta el archivo y la fila de SQLite. La instalación en Chrome/Edge real y la ejecución Windows siguen pendientes de validación.

@@ -62,3 +62,11 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Remoto configurado: `https://github.com/ThowiLabs/OIDM.git`.
 - Rama de trabajo: `main`.
 - El historial inicial existente se conserva; no reinicializar Git ni reescribir commits.
+
+## Hito de integración del navegador (30-oct-2026)
+
+- Primer host nativo `oidm-native-host` implementado en C++20 y enlazado por sockets Qt con la interfaz.
+- Extensión Chromium Manifest V3 con envío explícito desde menú contextual.
+- Prueba Linux de extremo a extremo: mensaje binario JSON -> host -> aplicación Qt -> HTTP local -> archivo correcto -> SQLite completado.
+- Registro Linux para Chrome, Chromium y Edge probado en rutas de prueba aisladas.
+- Firefox, instalación Windows y prueba dentro de un navegador real todavía pendientes.
