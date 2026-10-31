@@ -55,6 +55,10 @@ Entregar una aplicación nativa C++20/Qt 6 que permita agregar enlaces HTTP/HTTP
 - El motor divide archivos aptos en hasta ocho segmentos HTTP simultáneos, con manifiesto temporal y validación de rangos.
 - Los segmentos solo se reutilizan entre sesiones cuando el servidor aporta ETag fuerte o Last-Modified coherentes.
 - La arquitectura del gestor pasó a red asíncrona Qt sin QThread por descarga, resolviendo una carrera de cierre.
+- La publicación de archivo final no sustituye un destino existente (Linux: renameat2 no-replace con fallback de enlace exclusivo; Windows: MoveFileExW sin reemplazo).
+- Se agregaron pruebas de pausa, cancelación, colisión de destino creada a mitad de descarga y limpieza segura de enlaces simbólicos.
+- Se corrigió un uso de memoria liberada en el servidor local de pruebas, detectado mediante AddressSanitizer.
+- Cinco ejecuciones repetidas de CTest y una ejecución adicional con ASan/UBSan pasaron en Linux.
 - Aún faltan pruebas de estrés, rendimiento real frente a servidor remoto, I/O asíncrona para ensamblados grandes y compilación Windows.
 
 ## Fuera de alcance
@@ -67,8 +71,8 @@ Entregar una aplicación nativa C++20/Qt 6 que permita agregar enlaces HTTP/HTTP
 
 ## Próximos pasos
 
-1. Añadir pruebas de seguridad y carreras de rutas temporales para impedir corrupción/sobrescritura.
-2. Optimizar reconstrucción en segundo plano y ampliar pruebas de fallos de red/servidor.
-3. Implementar el host C++ Native Messaging y la primera extensión MV3.
-4. Validar paquete Linux y compilación Windows con Qt 6.
-5. Pulir la interfaz clásica tras asegurar motor e integración.
+1. Optimizar reconstrucción de archivos grandes en un trabajador de E/S independiente y ampliar pruebas de estrés/fallos.
+2. Validar la extensión Chromium MV3 en navegador real y realizar la primera compilación Windows con Qt 6.
+3. Validar paquetes portables de Linux y Windows con plugins Qt y el host nativo.
+4. Evaluar más controles de seguridad de rutas temporales y ampliar la matriz de sistemas de archivos.
+5. Pulir la interfaz nativa de Qt después de cerrar los puntos de fiabilidad.

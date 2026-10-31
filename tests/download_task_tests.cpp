@@ -1,6 +1,8 @@
 #include "core/download_task.h"
 #include "core/download_manager.h"
 #include "core/download_repository.h"
+#include "core/file_publish.h"
+#include "download_task_tests.h"
 
 #include <QFile>
 #include <QHostAddress>
@@ -27,12 +29,13 @@ using namespace oidm;
 namespace {
 
 class LocalHttpServer final : public QObject {
-    Q_OBJECT
 public:
     enum class Behavior {
         FullResponse,
         RangeResponse,
         IgnoreRange,
+        IgnoreSegmentRange,
+        IgnoreResumeRange,
         WrongRange,
         TruncatedResponse
     };
@@ -41,6 +44,16 @@ public:
         : QObject(parent), m_body(std::move(body)), m_behavior(behavior)
     {
         connect(&m_server, &QTcpServer::newConnection, this, &LocalHttpServer::acceptConnections);
+    }
+
+    ~LocalHttpServer() override
+    {
+        // Socket teardown emits disconnected while QObject members are already
+        // being destroyed; disconnect callbacks that capture this first.
+        QObject::disconnect(&m_server, nullptr, this, nullptr);
+        for (QTcpSocket *socket : m_server.findChildren<QTcpSocket *>()) {
+            QObject::disconnect(socket, nullptr, this, nullptr);
+        }
     }
 
     [[nodiscard]] bool listen()
@@ -58,7 +71,7 @@ public:
     [[nodiscard]] int maxConcurrentConnections() const { return m_maxConcurrentConnections; }
     [[nodiscard]] const QByteArray &body() const { return m_body; }
 
-private slots:
+private:
     void acceptConnections()
     {
         while (m_server.hasPendingConnections()) {
@@ -98,12 +111,13 @@ private:
     }
 
     [[nodiscard]] QByteArray response(int status, const QByteArray &reason,
-                                      const QByteArray &headers, const QByteArray &body) const
+                                      const QByteArray &headers, const QByteArray &body,
+                                      const QByteArray &etag = QByteArrayLiteral("\"oidm-test-v1\"")) const
     {
         QByteArray result = "HTTP/1.1 " + QByteArray::number(status) + ' ' + reason + "\r\n";
         result += "Connection: close\r\n";
         result += "Content-Type: application/octet-stream\r\n";
-        result += "ETag: \"oidm-test-v1\"\r\n";
+        result += "ETag: " + etag + "\r\n";
         result += headers;
         result += "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n";
         result += body;
@@ -119,6 +133,25 @@ private:
         case Behavior::FullResponse:
         case Behavior::IgnoreRange:
             output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body);
+            break;
+        case Behavior::IgnoreSegmentRange:
+            if (offset == 0 && requestedEnd == 0) {
+                const QByteArray headers = "Accept-Ranges: bytes\r\nContent-Range: bytes 0-0/"
+                    + QByteArray::number(m_body.size()) + "\r\n";
+                output = response(206, "Partial Content", headers, m_body.left(1));
+            } else {
+                output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body);
+            }
+            break;
+        case Behavior::IgnoreResumeRange:
+            if (offset == 0 && requestedEnd == 0) {
+                const QByteArray headers = "Accept-Ranges: bytes\r\nContent-Range: bytes 0-0/"
+                    + QByteArray::number(m_body.size()) + "\r\n";
+                output = response(206, "Partial Content", headers, m_body.left(1));
+            } else {
+                output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body,
+                                  QByteArrayLiteral("\"oidm-test-v2\""));
+            }
             break;
         case Behavior::TruncatedResponse: {
             QByteArray partial = m_body.left(qMax(1, m_body.size() / 2));
@@ -171,7 +204,6 @@ private:
 
 
 class HoldingHttpServer final : public QObject {
-    Q_OBJECT
 public:
     explicit HoldingHttpServer(QByteArray body, QObject *parent = nullptr)
         : QObject(parent), m_body(std::move(body))
@@ -207,6 +239,14 @@ public:
             });
             }
         });
+    }
+
+    ~HoldingHttpServer() override
+    {
+        QObject::disconnect(&m_server, nullptr, this, nullptr);
+        for (QTcpSocket *socket : m_server.findChildren<QTcpSocket *>()) {
+            QObject::disconnect(socket, nullptr, this, nullptr);
+        }
     }
 
     [[nodiscard]] bool listen() { return m_server.listen(QHostAddress::LocalHost, 0); }
@@ -283,19 +323,7 @@ bool writeSingleManifest(const QString &destination, const QString &url, const q
 
 } // namespace
 
-class DownloadTaskTests final : public QObject {
-    Q_OBJECT
-private slots:
-    void initTestCase();
-    void downloadsFullResponse();
-    void segmentedTransfersReassembleLargeFiles();
-    void segmentedTransferResumesSavedFragments();
-    void resumesFromValidatedRange();
-    void restartsWhenServerIgnoresRange();
-    void rejectsMismatchedContentRange();
-    void preservesPartialFileAfterInterruptedResponse();
-    void limitsConcurrentDownloadsAndStartsQueuedItems();
-};
+
 
 void DownloadTaskTests::initTestCase()
 {
@@ -354,7 +382,7 @@ void DownloadTaskTests::segmentedTransfersReassembleLargeFiles()
             .arg(server.maxConcurrentConnections())));
 
     QList<QPair<qint64, qint64>> ranges;
-    const QRegularExpression rangePattern(QStringLiteral("(?im)^range:\s*bytes=(\d+)-(\d+)"));
+    const QRegularExpression rangePattern(QStringLiteral("(?im)^range:\\s*bytes=(\\d+)-(\\d+)"));
     for (const QByteArray &request : server.requests()) {
         const auto match = rangePattern.match(QString::fromLatin1(request));
         QVERIFY(match.hasMatch());
@@ -367,11 +395,46 @@ void DownloadTaskTests::segmentedTransfersReassembleLargeFiles()
         return left.first < right.first;
     });
     QVERIFY(!ranges.isEmpty());
-    QCOMPARE(ranges.first().first, qint64{1});
+    QCOMPARE(ranges.first().first, qint64{0});
     for (qsizetype index = 1; index < ranges.size(); ++index) {
         QCOMPARE(ranges.at(index - 1).second + 1, ranges.at(index).first);
     }
     QCOMPARE(ranges.last().second, static_cast<qint64>(body.size() - 1));
+    QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
+}
+
+void DownloadTaskTests::fallsBackWhenSegmentRangeIsIgnored()
+{
+    QByteArray body(5 * 1024 * 1024 + 257, Qt::Uninitialized);
+    for (qsizetype index = 0; index < body.size(); ++index) {
+        body[index] = static_cast<char>((index * 19 + index / 701) % 251);
+    }
+    LocalHttpServer server(body, LocalHttpServer::Behavior::IgnoreSegmentRange);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    const QString destination = temporary.filePath(QStringLiteral("fallback.bin"));
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QVERIFY2(finished.wait(20000), "Range-ignoring origin did not finish its fallback");
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QVERIFY2(result.status == DownloadStatus::Completed, qPrintable(result.error));
+    QCOMPARE(readFile(destination), body);
+
+    bool sawProbe = false;
+    bool sawSegmentRequest = false;
+    bool sawSequentialFallback = false;
+    for (const QByteArray &request : server.requests()) {
+        const QByteArray lower = request.toLower();
+        if (lower.contains("range: bytes=0-0")) sawProbe = true;
+        else if (lower.contains("range: bytes=")) sawSegmentRequest = true;
+        else sawSequentialFallback = true;
+    }
+    QVERIFY(sawProbe);
+    QVERIFY(sawSegmentRequest);
+    QVERIFY(sawSequentialFallback);
     QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
 }
 
@@ -495,6 +558,39 @@ void DownloadTaskTests::resumesFromValidatedRange()
     QCOMPARE(readFile(destination), body);
 }
 
+void DownloadTaskTests::restartsWhenIfRangeValidatorChanges()
+{
+    const QByteArray prefix("old-version-prefix-");
+    const QByteArray body("new-version-complete-resource");
+    LocalHttpServer server(body, LocalHttpServer::Behavior::IgnoreResumeRange);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    const QString destination = temporary.filePath(QStringLiteral("changed-validator.bin"));
+    QFile partial(destination + QStringLiteral(".oidm-part"));
+    QVERIFY(partial.open(QIODevice::WriteOnly));
+    QCOMPARE(partial.write(prefix), static_cast<qint64>(prefix.size()));
+    partial.close();
+    QVERIFY(writeSingleManifest(destination, server.url(), body.size()));
+
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QVERIFY(finished.wait(5000));
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Completed);
+    QCOMPARE(readFile(destination), body);
+
+    bool sentIfRange = false;
+    for (const QByteArray &request : server.requests()) {
+        const QByteArray lower = request.toLower();
+        sentIfRange |= lower.contains("range: bytes=" + QByteArray::number(prefix.size()) + "-")
+            && lower.contains("if-range: \"oidm-test-v1\"");
+    }
+    QVERIFY(sentIfRange);
+}
+
 void DownloadTaskTests::restartsWhenServerIgnoresRange()
 {
     const QByteArray stalePrefix("stale-partial-data");
@@ -570,6 +666,189 @@ void DownloadTaskTests::preservesPartialFileAfterInterruptedResponse()
     QVERIFY(partialInfo.size() < body.size());
 }
 
+void DownloadTaskTests::cancelsAndCleansTemporaryFiles()
+{
+    const QByteArray body(1024 * 1024, 'c');
+    HoldingHttpServer server(body);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    const QString destination = temporary.filePath(QStringLiteral("cancelled.bin"));
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QTRY_COMPARE(server.requestCount(), 1);
+    task.cancel();
+    QTRY_COMPARE(finished.count(), 1);
+
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Cancelled);
+    QVERIFY(!QFileInfo::exists(destination));
+    QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-part")));
+    QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
+}
+
+void DownloadTaskTests::rejectsExistingDestination()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("already-exists.bin"));
+    const QByteArray sentinel("do-not-overwrite");
+    QFile existing(destination);
+    QVERIFY(existing.open(QIODevice::WriteOnly));
+    QCOMPARE(existing.write(sentinel), static_cast<qint64>(sentinel.size()));
+    existing.close();
+
+    DownloadTask task(makeDownload(QStringLiteral("http://127.0.0.1:1/file.bin"), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QCOMPARE(finished.count(), 1);
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Failed);
+    QCOMPARE(readFile(destination), sentinel);
+}
+
+void DownloadTaskTests::rejectsEmbeddedCredentials()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("credentials.bin"));
+    DownloadTask task(makeDownload(QStringLiteral("https://user:secret@127.0.0.1/file.bin"), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QCOMPARE(finished.count(), 1);
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Failed);
+    QVERIFY(result.error.contains(QStringLiteral("credenciales"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(destination));
+}
+
+void DownloadTaskTests::protectsDestinationCreatedDuringTransfer()
+{
+    const QByteArray body("new download must not overwrite the existing destination");
+    HoldingHttpServer server(body);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    const QString destination = temporary.filePath(QStringLiteral("arrived-late.bin"));
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QTRY_COMPARE(server.requestCount(), 1);
+
+    const QByteArray sentinel("created by another process while downloading");
+    QFile existing(destination);
+    QVERIFY(existing.open(QIODevice::WriteOnly));
+    QCOMPARE(existing.write(sentinel), static_cast<qint64>(sentinel.size()));
+    existing.close();
+
+    QVERIFY(server.releaseNext());
+    QVERIFY(finished.wait(5000));
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Failed);
+    QCOMPARE(readFile(destination), sentinel);
+    QCOMPARE(readFile(destination + QStringLiteral(".oidm-part")), body);
+}
+
+void DownloadTaskTests::doesNotFollowTemporaryDirectorySymlinkOnCancel()
+{
+#ifdef Q_OS_WIN
+    QSKIP("Creating directory symlinks requires optional Windows privileges.");
+#else
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString protectedDirectory = temporary.filePath(QStringLiteral("protected"));
+    QVERIFY(QDir().mkpath(protectedDirectory));
+    const QString sentinelPath = QDir(protectedDirectory).filePath(QStringLiteral("untouched.bin"));
+    const QByteArray sentinel("external files must survive cancellation");
+    QFile sentinelFile(sentinelPath);
+    QVERIFY(sentinelFile.open(QIODevice::WriteOnly));
+    QCOMPARE(sentinelFile.write(sentinel), static_cast<qint64>(sentinel.size()));
+    sentinelFile.close();
+
+    const QString destination = temporary.filePath(QStringLiteral("test.bin"));
+    const QString partsPath = destination + QStringLiteral(".oidm-parts");
+    QVERIFY(QFile::link(protectedDirectory, partsPath));
+    QVERIFY(QFileInfo(partsPath).isSymLink());
+
+    DownloadRepository repository(temporary.filePath(QStringLiteral("cancel.sqlite3")));
+    QVERIFY2(repository.isOpen(), qPrintable(repository.lastError()));
+    Download item = makeDownload(QStringLiteral("http://127.0.0.1:1/test.bin"), destination);
+    item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString error;
+    QVERIFY2(repository.insert(item, &error), qPrintable(error));
+
+    DownloadManager manager(&repository);
+    QVERIFY2(manager.cancel(item.id, &error), qPrintable(error));
+    QCOMPARE(readFile(sentinelPath), sentinel);
+    QVERIFY(QFileInfo(protectedDirectory).isDir());
+    QVERIFY(!QFileInfo(partsPath).isSymLink());
+#endif
+}
+
+void DownloadTaskTests::publishesWithoutReplacingDestination()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("result.bin"));
+    const QString staged = temporary.filePath(QStringLiteral("staged.bin"));
+    const QByteArray sentinel("original content must remain intact");
+    const QByteArray payload("downloaded new data");
+    QFile original(destination);
+    QVERIFY(original.open(QIODevice::WriteOnly));
+    QCOMPARE(original.write(sentinel), static_cast<qint64>(sentinel.size()));
+    original.close();
+    QFile temporaryFile(staged);
+    QVERIFY(temporaryFile.open(QIODevice::WriteOnly));
+    QCOMPARE(temporaryFile.write(payload), static_cast<qint64>(payload.size()));
+    temporaryFile.close();
+
+    QString error;
+    QVERIFY(!publishFileNoReplace(staged, destination, &error));
+    QVERIFY2(!error.isEmpty(), "Collision must return a useful error");
+    QCOMPARE(readFile(destination), sentinel);
+    QCOMPARE(readFile(staged), payload);
+
+    QVERIFY(QFile::remove(destination));
+    QVERIFY(publishFileNoReplace(staged, destination, &error));
+    QCOMPARE(readFile(destination), payload);
+    QVERIFY(!QFileInfo::exists(staged));
+}
+
+void DownloadTaskTests::pausesAndResumesSingleStream()
+{
+    const QByteArray body("paused transfer content should eventually complete");
+    HoldingHttpServer server(body);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("pause.bin"));
+    Download paused;
+    {
+        DownloadTask task(makeDownload(server.url(), destination));
+        QSignalSpy finished(&task, &DownloadTask::finished);
+        task.start();
+        QTRY_COMPARE(server.requestCount(), 1);
+        task.pause();
+        QTRY_COMPARE(finished.count(), 1);
+        paused = qvariant_cast<Download>(finished.takeFirst().at(0));
+        QCOMPARE(paused.status, DownloadStatus::Paused);
+        QVERIFY(!QFileInfo::exists(destination));
+    }
+
+    DownloadTask resumed(paused);
+    QSignalSpy finished(&resumed, &DownloadTask::finished);
+    resumed.start();
+    QTRY_COMPARE(server.requestCount(), 2);
+    QVERIFY(server.releaseNext());
+    QVERIFY(finished.wait(5000));
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QCOMPARE(result.status, DownloadStatus::Completed);
+    QCOMPARE(readFile(destination), body);
+}
+
 void DownloadTaskTests::limitsConcurrentDownloadsAndStartsQueuedItems()
 {
     const QByteArray body("queue-test");
@@ -621,4 +900,3 @@ void DownloadTaskTests::limitsConcurrentDownloadsAndStartsQueuedItems()
 }
 
 QTEST_GUILESS_MAIN(DownloadTaskTests)
-#include "download_task_tests.moc"

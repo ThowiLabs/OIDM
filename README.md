@@ -15,7 +15,10 @@ Implemented:
 - Up to 8 simultaneous byte-range segments per eligible file, with independent temporary files and byte-accurate reconstruction.
 - Pausing, cancellation, legacy single-stream partial resume, and recovery of validated segment manifests.
 - Strict response range validation and fallback to a fresh transfer when a server ignores Range with `200 OK`.
-- Local integration tests for multi-segment reconstruction and segmented resume without re-downloading completed chunks.
+- Collision-safe publication of completed files without replacing an existing destination, including files created mid-transfer; atomic no-replace on supported Linux filesystems, exclusive publication fallback, and Windows no-replace move.
+- Guarded cleanup of temporary artifacts without following directory symlinks.
+- Local integration tests for multi-segment reconstruction, segmented resume without re-downloading completed chunks, pause/cancel, name collisions and symlink-safe cleanup.
+- Repeated CTest runs and an AddressSanitizer/UndefinedBehaviorSanitizer test build on Linux.
 - Startup recovery that marks interrupted active records as paused.
 - A C++ Native Messaging host and a Chromium MV3 context-menu extension (Chrome/Edge/Chromium) for explicitly sending HTTP/HTTPS links to OIDM.
 - User-level Native Messaging registration through `oidm-native-host --register-chromium EXTENSION_ID`.
@@ -25,6 +28,7 @@ Not implemented yet:
 - FTP support, advanced proxy/SOCKS controls, authentication manager, scheduled queues, and speed limits.
 - Automatic interception of browser downloads and Firefox integration (first Chromium extension and native host exist).
 - HLS/DASH parsing, video detection, Link Grabber, and platform packaging.
+- GUI-independent disk assembly for huge downloads; segmented assembly currently runs synchronously in the Qt event loop.
 
 OIDM now has an initial working parallel segmented engine, verified against local HTTP test fixtures. This is **not yet full IDM feature parity**, and the actual speed increase depends on server limits, latency and available bandwidth. Large-file assembly and disk I/O performance still need optimization and stress tests.
 

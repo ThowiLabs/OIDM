@@ -6,12 +6,26 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTimer>
 
 namespace oidm {
 namespace {
 void setError(QString *target, const QString &message) {
     if (target) *target = message;
+}
+
+void cleanupTemporaryArtifacts(const Download &item)
+{
+    const QString partial = item.destination + QStringLiteral(".oidm-part");
+    const QString directory = item.destination + QStringLiteral(".oidm-parts");
+    (void)QFile::remove(partial);
+    const QFileInfo info(directory);
+    if (info.isSymLink()) {
+        (void)QFile::remove(directory);
+    } else if (info.exists() && info.isDir()) {
+        (void)QDir(directory).removeRecursively();
+    }
 }
 }
 
@@ -116,8 +130,7 @@ bool DownloadManager::cancel(const QString &id, QString *error) {
         setError(error, tr("La descarga ya terminó."));
         return false;
     }
-    QFile::remove(item.destination + QStringLiteral(".oidm-part"));
-    QDir(item.destination + QStringLiteral(".oidm-parts")).removeRecursively();
+    cleanupTemporaryArtifacts(item);
     item.downloadedBytes = 0;
     setInactiveStatus(item, DownloadStatus::Cancelled);
     return true;
@@ -131,8 +144,7 @@ bool DownloadManager::remove(const QString &id, QString *error) {
     Download item;
     if (!loadDownload(id, &item, error)) return false;
     if (!m_repository || !m_repository->remove(id, error)) return false;
-    QFile::remove(item.destination + QStringLiteral(".oidm-part"));
-    QDir(item.destination + QStringLiteral(".oidm-parts")).removeRecursively();
+    cleanupTemporaryArtifacts(item);
     return true;
 }
 

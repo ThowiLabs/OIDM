@@ -65,7 +65,7 @@ private:
     void finalizeSegments();
     void finalizeSingleStream();
     void updateProgress(bool force = false);
-    void saveManifest();
+    [[nodiscard]] bool saveManifest();
     void clearSegmentDirectory();
     void fail(const QString &error);
     void finish(DownloadStatus status, const QString &error = {});
@@ -84,6 +84,7 @@ private:
     QJsonObject m_savedManifest;
     QByteArray m_probeData;
     QString m_etag;
+    QString m_effectiveUrl;
     QString m_lastModified;
     QString m_contentType;
     qint64 m_totalBytes{-1};

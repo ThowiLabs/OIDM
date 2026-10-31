@@ -17,7 +17,7 @@ La aplicación de escritorio usa C++20, Qt 6 Widgets, Qt Network y Qt SQL. SQLit
 - Firefox y detección automática de vídeos: pendientes.
 - `src/platform/` (futuro): integración con Windows/Linux y empaquetado.
 
-El motor utiliza llamadas asíncronas a `QNetworkAccessManager` en el bucle de eventos de Qt; no crea hilos adicionales por transferencia. Las operaciones de red no bloquean la interfaz. **Limitación conocida**: la reconstrucción de ficheros y algunas escrituras a disco se realizan sin un trabajador de E/S dedicado y deberán migrarse a una tarea de disco antes de manejar ficheros enormes en producción. Las señales de Qt mantienen actualizado el modelo de descargas.
+El motor utiliza llamadas asíncronas a `QNetworkAccessManager` en el bucle de eventos de Qt; no crea hilos adicionales por transferencia. Las operaciones de red no bloquean la interfaz. **Limitación conocida**: la reconstrucción de ficheros y algunas escrituras a disco se realizan sin un trabajador de E/S dedicado y deberán migrarse a una tarea de disco antes de manejar ficheros enormes en producción. Las señales de Qt mantienen actualizado el modelo de descargas. El ensamblado segmentado usa `QTemporaryFile` y hace publicación exclusiva, pero todavía queda pendiente mover la copia de segmentos a un trabajador de disco.
 
 ## Protocolo de transferencia
 
@@ -28,7 +28,7 @@ El motor utiliza llamadas asíncronas a `QNetworkAccessManager` en el bucle de e
 5. Enviar `If-Range` con ETag fuerte o Last-Modified en solicitudes segmentadas cuando está disponible. No reutilizar fragmentos de sesiones previas sin validador estable.
 6. Validar cada respuesta: código 206, inicio/fin/tamaño exactos, longitud del cuerpo y validador estable.
 7. Escribir cada segmento en su propio archivo temporal y persistir el manifiesto mediante reemplazo atómico.
-8. Ensamblar en orden mediante un archivo temporal de destino; verificar tamaño total y publicar solo al completar.
+8. Ensamblar en orden mediante un archivo temporal aleatorio del mismo directorio; verificar tamaño total y publicar solo al completar. En Linux se utiliza `renameat2(RENAME_NOREPLACE)` con alternativa de enlace duro exclusivo; en Windows `MoveFileExW` sin `MOVEFILE_REPLACE_EXISTING`. No basta con comprobar la existencia del destino antes de publicar.
 9. Si el servidor ignora Range o la identidad del recurso cambia, cancelar todos los segmentos, descartar ese conjunto y reiniciar secuencialmente desde cero.
 10. Si no hay soporte Range, descargar secuencialmente.
 
@@ -43,7 +43,8 @@ SQLite conserva la entidad y el estado visible. El manifiesto de segmentos conse
 - HTTP/HTTPS únicamente en la primera fase.
 - Redirecciones sin downgrade HTTPS a HTTP.
 - No incluir credenciales en registros ni diagnósticos. URLs con userinfo rechazadas por el motor y puente nativo; protección adicional de logs e historial queda por auditar.
-- No sobrescribir destinos existentes.
+- No sobrescribir destinos existentes, incluso cuando aparezcan durante la transferencia; existen pruebas de colisión de destino y de publicación exclusiva.
+- Al limpiar los temporales, no seguir enlaces simbólicos de carpetas a archivos ajenos.
 - Pendiente: endurecer la creación de archivos temporales frente a enlaces simbólicos y carreras de ruta.
 - Mantener temporales dentro de la carpeta de destino elegida.
 - Timeouts de transferencia y límites de concurrencia explícitos.

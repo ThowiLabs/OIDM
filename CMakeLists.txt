@@ -31,6 +31,8 @@ add_executable(oidm WIN32 MACOSX_BUNDLE
     src/core/download_repository.cpp
     src/core/download_task.h
     src/core/download_task.cpp
+    src/core/file_publish.h
+    src/core/file_publish.cpp
     src/core/download_manager.h
     src/core/download_manager.cpp
     src/ui/download_table_model.h
@@ -88,11 +90,13 @@ if(BUILD_TESTING)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
     qt_add_executable(oidm_download_tests
         tests/download_task_tests.cpp
-        src/core/download.h
+        tests/download_task_tests.h
         src/core/download.h
         src/core/download.cpp
         src/core/download_task.h
         src/core/download_task.cpp
+        src/core/file_publish.h
+        src/core/file_publish.cpp
         src/core/download_manager.h
         src/core/download_manager.cpp
         src/core/download_repository.h
@@ -106,4 +110,5 @@ if(BUILD_TESTING)
         Qt6::Test
     )
     add_test(NAME oidm_download_tests COMMAND oidm_download_tests)
+    set_tests_properties(oidm_download_tests PROPERTIES ENVIRONMENT "LC_ALL=C.UTF-8")
 endif()

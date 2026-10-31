@@ -1,4 +1,5 @@
 #include "core/download_task.h"
+#include "core/file_publish.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -9,6 +10,7 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QTemporaryFile>
 #include <QUrl>
 
 #include <algorithm>
@@ -203,6 +205,7 @@ void DownloadTask::startRangeProbe()
     m_probeData.clear();
     m_totalBytes = -1;
     m_etag.clear();
+    m_effectiveUrl.clear();
     m_lastModified.clear();
     m_contentType.clear();
 
@@ -227,6 +230,7 @@ void DownloadTask::onProbeMetadataChanged()
 
     QNetworkReply *reply = m_probeReply.data();
     const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    m_effectiveUrl = reply->url().toString(QUrl::FullyEncoded);
     m_etag = responseEtag(reply);
     m_lastModified = responseLastModified(reply);
     m_contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
@@ -335,6 +339,7 @@ bool DownloadTask::manifestMatchesProbe() const
     if (m_savedManifest.isEmpty()) return false;
     if (m_savedManifest.value(QStringLiteral("version")).toInt() != 1) return false;
     if (m_savedManifest.value(QStringLiteral("url")).toString() != m_download.url) return false;
+    if (m_savedManifest.value(QStringLiteral("effectiveUrl")).toString() != m_effectiveUrl) return false;
     if (m_savedManifest.value(QStringLiteral("totalBytes")).toVariant().toLongLong() != m_totalBytes) return false;
 
     const QString savedEtag = m_savedManifest.value(QStringLiteral("etag")).toString();
@@ -399,6 +404,16 @@ void DownloadTask::prepareSegments()
             }
             if (expectedStart != m_totalBytes) reuseManifest = false;
         }
+        if (reuseManifest) {
+            const QString expectedFirstByte = m_savedManifest.value(QStringLiteral("firstByte")).toString();
+            if (!expectedFirstByte.isEmpty() && !m_segments.empty()) {
+                QFile firstSegment(m_segments.front().path);
+                if (!firstSegment.open(QIODevice::ReadOnly)
+                    || QString::fromLatin1(firstSegment.read(1).toHex()) != expectedFirstByte) {
+                    reuseManifest = false;
+                }
+            }
+        }
     }
 
     if (!reuseManifest) {
@@ -430,7 +445,10 @@ void DownloadTask::prepareSegments()
     m_download.status = DownloadStatus::Downloading;
     m_download.error.clear();
     updateProgress(true);
-    saveManifest();
+    if (!saveManifest()) {
+        fail(tr("No se pudo guardar el manifiesto de los segmentos."));
+        return;
+    }
 
     bool allComplete = !m_segments.empty();
     for (const Segment &segment : m_segments) allComplete = allComplete && segment.complete;
@@ -524,7 +542,8 @@ bool DownloadTask::validateSegmentHeaders(const int index, QNetworkReply *reply)
         fail(tr("La longitud anunciada del segmento %1 no coincide con su rango.").arg(index + 1));
         return false;
     }
-    if (!responseValidatorMatches(reply, m_etag, m_lastModified)) {
+    if (reply->url().toString(QUrl::FullyEncoded) != m_effectiveUrl
+        || !responseValidatorMatches(reply, m_etag, m_lastModified)) {
         fail(tr("La identidad del recurso cambió durante la descarga segmentada."));
         return false;
     }
@@ -535,7 +554,7 @@ bool DownloadTask::validateSegmentHeaders(const int index, QNetworkReply *reply)
 
 void DownloadTask::readSegmentData(const int index, QNetworkReply *reply)
 {
-    if (m_terminal || m_switchingMode || reply == nullptr
+    if (m_terminal || m_switchingMode || reply == nullptr || !reply->isOpen()
         || index < 0 || index >= static_cast<int>(m_segments.size())) return;
     if (!validateSegmentHeaders(index, reply)) return;
 
@@ -559,55 +578,84 @@ void DownloadTask::readSegmentData(const int index, QNetworkReply *reply)
 
 void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
 {
-    if (reply != nullptr) reply->readAll();
     if (index < 0 || index >= static_cast<int>(m_segments.size())) {
         if (reply != nullptr) reply->deleteLater();
         return;
     }
 
-    Segment &segment = m_segments[static_cast<size_t>(index)];
-    segment.reply = nullptr;
+    m_segments[static_cast<size_t>(index)].reply = nullptr;
     if (m_terminal) {
         if (reply != nullptr) reply->deleteLater();
         return;
     }
 
-    if (m_switchingMode) {
-        if (reply != nullptr) reply->deleteLater();
+    auto closeSegmentFile = [this, index]() {
+        if (index < 0 || index >= static_cast<int>(m_segments.size())) return true;
+        Segment &current = m_segments[static_cast<size_t>(index)];
+        if (!current.file || !current.file->isOpen()) return true;
+        const bool flushed = current.file->flush();
+        const QString fileError = current.file->errorString();
+        current.file->close();
+        if (!flushed && !m_pauseRequested && !m_cancelRequested && !m_switchingMode) {
+            fail(tr("No se pudo guardar el segmento %1: %2").arg(index + 1).arg(fileError));
+            return false;
+        }
+        return true;
+    };
+
+    auto continueSwitchIfReady = [this]() {
         const bool pending = std::any_of(m_segments.begin(), m_segments.end(),
             [](const Segment &item) { return isActiveReply(item.reply); });
-        if (!pending && m_fallbackRequested) {
-            m_segments.clear();
-            clearSegmentDirectory();
-            m_segmented = false;
-            m_switchingMode = false;
-            m_fallbackRequested = false;
-            startSingleStream(false);
-        }
+        if (pending || !m_switchingMode || !m_fallbackRequested) return;
+        m_segments.clear();
+        clearSegmentDirectory();
+        m_segmented = false;
+        m_switchingMode = false;
+        m_fallbackRequested = false;
+        if (m_cancelRequested) finish(DownloadStatus::Cancelled);
+        else if (m_pauseRequested) finish(DownloadStatus::Paused);
+        else startSingleStream(false);
+    };
+
+    if (m_switchingMode) {
+        (void)closeSegmentFile();
+        if (reply != nullptr) reply->deleteLater();
+        continueSwitchIfReady();
         return;
     }
 
     if (!m_pauseRequested && !m_cancelRequested && reply != nullptr) {
-        if (!segment.headersValidated && !validateSegmentHeaders(index, reply)) {
+        if (!m_segments[static_cast<size_t>(index)].headersValidated
+            && !validateSegmentHeaders(index, reply)) {
             if (reply != nullptr) reply->deleteLater();
+            if (m_switchingMode) continueSwitchIfReady();
             return;
         }
-        if (m_switchingMode || m_terminal) {
+        if (m_terminal || m_switchingMode || index >= static_cast<int>(m_segments.size())) {
             if (reply != nullptr) reply->deleteLater();
+            if (m_switchingMode) continueSwitchIfReady();
             return;
         }
         readSegmentData(index, reply);
-    }
-
-    if (segment.file && segment.file->isOpen()) {
-        if (!segment.file->flush() && !m_pauseRequested && !m_cancelRequested) {
-            const QString error = segment.file->errorString();
+        if (m_terminal) {
             if (reply != nullptr) reply->deleteLater();
-            fail(tr("No se pudo guardar el segmento %1: %2").arg(index + 1).arg(error));
             return;
         }
-        segment.file->close();
+    } else if (m_pauseRequested && reply != nullptr
+               && m_segments[static_cast<size_t>(index)].headersValidated && reply->isOpen()) {
+        readSegmentData(index, reply);
+        if (m_terminal) {
+            if (reply != nullptr) reply->deleteLater();
+            return;
+        }
     }
+
+    if (!closeSegmentFile()) {
+        if (reply != nullptr) reply->deleteLater();
+        return;
+    }
+    const QNetworkReply::NetworkError replyError = reply != nullptr ? reply->error() : QNetworkReply::NoError;
+    const QString replyErrorText = reply != nullptr ? reply->errorString() : QString();
     if (reply != nullptr) reply->deleteLater();
 
     const bool pending = std::any_of(m_segments.begin(), m_segments.end(),
@@ -615,6 +663,9 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
 
     if (m_cancelRequested) {
         if (!pending) {
+            for (Segment &item : m_segments) {
+                if (item.file && item.file->isOpen()) item.file->close();
+            }
             clearSegmentDirectory();
             QFile::remove(partialPath());
             m_download.downloadedBytes = 0;
@@ -623,11 +674,10 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
         return;
     }
     if (m_pauseRequested) {
-        if (reply != nullptr && segment.headersValidated && reply->isOpen()) {
-            readSegmentData(index, reply);
-            if (m_terminal) return;
+        if (!saveManifest()) {
+            fail(tr("No se pudo guardar el estado de los segmentos pausados."));
+            return;
         }
-        (void)saveManifest();
         if (!pending) {
             updateProgress(true);
             finish(DownloadStatus::Paused);
@@ -635,11 +685,12 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
         return;
     }
 
-    if (reply != nullptr && reply->error() != QNetworkReply::NoError) {
-        fail(reply->errorString());
+    if (replyError != QNetworkReply::NoError) {
+        fail(replyErrorText);
         return;
     }
 
+    Segment &segment = m_segments[static_cast<size_t>(index)];
     const qint64 expectedLength = segment.end - segment.start + 1;
     if (segment.downloaded != expectedLength) {
         fail(tr("El segmento %1 quedó incompleto (%2 de %3 bytes).")
@@ -649,7 +700,10 @@ void DownloadTask::onSegmentFinished(const int index, QNetworkReply *reply)
 
     segment.complete = true;
     updateProgress(true);
-    saveManifest();
+    if (!saveManifest()) {
+        fail(tr("No se pudo guardar el manifiesto después de completar un segmento."));
+        return;
+    }
 
     const bool allComplete = std::all_of(m_segments.begin(), m_segments.end(),
         [](const Segment &item) { return item.complete; });
@@ -666,6 +720,9 @@ void DownloadTask::switchToSingleStream()
     const bool pending = std::any_of(m_segments.begin(), m_segments.end(),
         [](const Segment &item) { return isActiveReply(item.reply); });
     if (!pending) {
+        for (Segment &segment : m_segments) {
+            if (segment.file && segment.file->isOpen()) segment.file->close();
+        }
         m_segments.clear();
         clearSegmentDirectory();
         m_segmented = false;
@@ -678,11 +735,9 @@ void DownloadTask::switchToSingleStream()
 void DownloadTask::stopSegmentRequests()
 {
     for (Segment &segment : m_segments) {
-        if (segment.file && segment.file->isOpen()) {
-            segment.file->flush();
-            segment.file->close();
+        if (segment.reply && segment.reply->isRunning()) {
+            QMetaObject::invokeMethod(segment.reply.data(), "abort", Qt::QueuedConnection);
         }
-        if (segment.reply && segment.reply->isRunning()) segment.reply->abort();
     }
 }
 
@@ -758,7 +813,8 @@ void DownloadTask::onSingleMetadataChanged()
             fail(tr("El tamaño del recurso cambió durante la reanudación."));
             return;
         }
-        if (!responseValidatorMatches(reply, m_etag, m_lastModified)) {
+        if (reply->url().toString(QUrl::FullyEncoded) != m_effectiveUrl
+            || !responseValidatorMatches(reply, m_etag, m_lastModified)) {
             fail(tr("La identidad del recurso cambió durante la reanudación."));
             return;
         }
@@ -776,6 +832,7 @@ void DownloadTask::onSingleMetadataChanged()
         }
         const QVariant length = reply->header(QNetworkRequest::ContentLengthHeader);
         m_totalBytes = length.isValid() ? length.toLongLong() : -1;
+        m_effectiveUrl = reply->url().toString(QUrl::FullyEncoded);
         const QString receivedEtag = responseEtag(reply);
         const QString receivedLastModified = responseLastModified(reply);
         if (!receivedEtag.isEmpty()) m_etag = receivedEtag;
@@ -801,12 +858,14 @@ void DownloadTask::onSingleMetadataChanged()
     m_download.contentType = m_contentType;
     m_download.error.clear();
     updateProgress(true);
-    saveManifest();
+    if (!saveManifest()) {
+        fail(tr("No se pudo guardar el estado de la descarga."));
+    }
 }
 
 void DownloadTask::onSingleReadyRead()
 {
-    if (m_terminal || m_singleReply.isNull()) return;
+    if (m_terminal || m_singleReply.isNull() || !m_singleReply->isOpen()) return;
     if (!m_singleHeadersValidated) onSingleMetadataChanged();
     if (m_terminal || !m_singleHeadersValidated || !m_singleFile || !m_singleFile->isOpen()) return;
 
@@ -828,7 +887,7 @@ void DownloadTask::onSingleFinished()
     if (reply != nullptr && !m_pauseRequested && !m_cancelRequested && !m_singleHeadersValidated) {
         onSingleMetadataChanged();
     }
-    if (!m_terminal && reply != nullptr && !m_pauseRequested && !m_cancelRequested
+    if (!m_terminal && reply != nullptr && reply->isOpen() && !m_pauseRequested && !m_cancelRequested
         && m_singleHeadersValidated && m_singleFile && m_singleFile->isOpen()) {
         const QByteArray remaining = reply->readAll();
         if (!remaining.isEmpty()) {
@@ -862,7 +921,10 @@ void DownloadTask::onSingleFinished()
     }
     if (m_pauseRequested) {
         updateProgress(true);
-        saveManifest();
+        if (!saveManifest()) {
+            fail(tr("No se pudo guardar el estado de la descarga pausada."));
+            return;
+        }
         finish(DownloadStatus::Paused);
         return;
     }
@@ -894,8 +956,9 @@ void DownloadTask::finalizeSingleStream()
         }
         m_singleFile->close();
     }
-    if (!QFile::rename(partialPath(), m_download.destination)) {
-        fail(tr("No se pudo mover el archivo temporal al destino final."));
+    QString publishError;
+    if (!publishFileNoReplace(partialPath(), m_download.destination, &publishError)) {
+        fail(tr("No se pudo publicar el archivo sin reemplazar el destino: %1").arg(publishError));
         return;
     }
     clearSegmentDirectory();
@@ -910,9 +973,9 @@ void DownloadTask::finalizeSegments()
         return;
     }
 
-    QSaveFile output(m_download.destination);
-    output.setDirectWriteFallback(false);
-    if (!output.open(QIODevice::WriteOnly)) {
+    QTemporaryFile output(m_download.destination + QStringLiteral(".oidm-assembly-XXXXXX"));
+    output.setAutoRemove(true);
+    if (!output.open()) {
         fail(tr("No se pudo crear el archivo final: %1").arg(output.errorString()));
         return;
     }
@@ -923,27 +986,27 @@ void DownloadTask::finalizeSegments()
     for (const Segment &segment : m_segments) {
         QFile input(segment.path);
         if (!input.open(QIODevice::ReadOnly)) {
-            output.cancelWriting();
+            output.close();
             fail(tr("No se pudo leer el segmento %1 para ensamblarlo.").arg(segment.index + 1));
             return;
         }
         const qint64 expected = segment.end - segment.start + 1;
         if (input.size() != expected) {
-            output.cancelWriting();
+            output.close();
             fail(tr("El segmento %1 no tiene el tamaño esperado.").arg(segment.index + 1));
             return;
         }
         while (!input.atEnd()) {
             const qint64 bytesRead = input.read(buffer.data(), buffer.size());
             if (bytesRead < 0) {
-                output.cancelWriting();
+                output.close();
                 fail(tr("Error al leer el segmento %1.").arg(segment.index + 1));
                 return;
             }
             if (bytesRead == 0) break;
             const qint64 bytesWritten = output.write(buffer.constData(), bytesRead);
             if (bytesWritten != bytesRead) {
-                output.cancelWriting();
+                output.close();
                 fail(tr("Error al ensamblar el archivo final: %1").arg(output.errorString()));
                 return;
             }
@@ -952,12 +1015,19 @@ void DownloadTask::finalizeSegments()
     }
 
     if (assembledBytes != m_totalBytes) {
-        output.cancelWriting();
+        output.close();
         fail(tr("El archivo ensamblado tiene %1 de %2 bytes.").arg(assembledBytes).arg(m_totalBytes));
         return;
     }
-    if (!output.commit()) {
-        fail(tr("No se pudo publicar el archivo final: %1").arg(output.errorString()));
+    if (!output.flush()) {
+        fail(tr("No se pudo vaciar al disco el ensamblado: %1").arg(output.errorString()));
+        return;
+    }
+    const QString stagedFile = output.fileName();
+    output.close();
+    QString publishError;
+    if (!publishFileNoReplace(stagedFile, m_download.destination, &publishError)) {
+        fail(tr("No se pudo publicar el archivo sin reemplazar el destino: %1").arg(publishError));
         return;
     }
 
@@ -993,26 +1063,28 @@ void DownloadTask::updateProgress(const bool force)
         m_download.updatedAt = QDateTime::currentDateTimeUtc();
         emit updated(m_download);
         if (progressElapsed >= kManifestIntervalMs && (m_segmented || !m_singleReply.isNull())) {
-            saveManifest();
+            (void)saveManifest();
         }
         m_progressTimer.restart();
     }
 }
 
-void DownloadTask::saveManifest()
+bool DownloadTask::saveManifest()
 {
-    if (m_download.destination.isEmpty() || !QDir().mkpath(segmentDirectory())) return;
-    if (QFileInfo(segmentDirectory()).isSymLink() || QFileInfo(manifestPath()).isSymLink()) return;
+    if (m_download.destination.isEmpty() || !QDir().mkpath(segmentDirectory())) return false;
+    if (QFileInfo(segmentDirectory()).isSymLink() || QFileInfo(manifestPath()).isSymLink()) return false;
 
     QJsonObject manifest;
     manifest.insert(QStringLiteral("version"), 1);
     manifest.insert(QStringLiteral("url"), m_download.url);
+    manifest.insert(QStringLiteral("effectiveUrl"), m_effectiveUrl);
     manifest.insert(QStringLiteral("totalBytes"), m_totalBytes);
     manifest.insert(QStringLiteral("etag"), m_etag);
     manifest.insert(QStringLiteral("lastModified"), m_lastModified);
     manifest.insert(QStringLiteral("contentType"), m_contentType);
     manifest.insert(QStringLiteral("mode"), m_segmented ? QStringLiteral("segments") : QStringLiteral("single"));
     manifest.insert(QStringLiteral("downloadedBytes"), m_download.downloadedBytes);
+    manifest.insert(QStringLiteral("segmentCount"), static_cast<int>(m_segments.size()));
 
     if (m_segmented) {
         QJsonArray segments;
@@ -1026,14 +1098,21 @@ void DownloadTask::saveManifest()
             segments.append(item);
         }
         manifest.insert(QStringLiteral("segments"), segments);
+        if (!m_segments.empty()) {
+            QFile firstSegment(m_segments.front().path);
+            if (firstSegment.open(QIODevice::ReadOnly)) {
+                manifest.insert(QStringLiteral("firstByte"), QString::fromLatin1(firstSegment.read(1).toHex()));
+            }
+        }
     }
 
     const QByteArray encoded = QJsonDocument(manifest).toJson(QJsonDocument::Compact);
     QSaveFile file(manifestPath());
     file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly)) return;
-    if (file.write(encoded) != encoded.size() || !file.commit()) return;
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    if (file.write(encoded) != encoded.size() || !file.commit()) return false;
     m_savedManifest = manifest;
+    return true;
 }
 
 void DownloadTask::clearSegmentDirectory()
@@ -1052,8 +1131,12 @@ void DownloadTask::pause()
 {
     if (m_terminal) return;
     m_pauseRequested = true;
-    if (m_probeReply && m_probeReply->isRunning()) m_probeReply->abort();
-    if (m_singleReply && m_singleReply->isRunning()) m_singleReply->abort();
+    if (m_probeReply && m_probeReply->isRunning()) {
+        QMetaObject::invokeMethod(m_probeReply.data(), "abort", Qt::QueuedConnection);
+    }
+    if (m_singleReply && m_singleReply->isRunning()) {
+        QMetaObject::invokeMethod(m_singleReply.data(), "abort", Qt::QueuedConnection);
+    }
     stopSegmentRequests();
 
     const bool pending = isActiveReply(m_probeReply) || isActiveReply(m_singleReply)
@@ -1064,7 +1147,13 @@ void DownloadTask::pause()
             m_singleFile->flush();
             m_singleFile->close();
         }
-        saveManifest();
+        for (Segment &segment : m_segments) {
+            if (segment.file && segment.file->isOpen()) {
+                segment.file->flush();
+                segment.file->close();
+            }
+        }
+        (void)saveManifest();
         finish(DownloadStatus::Paused);
     }
 }
@@ -1073,8 +1162,12 @@ void DownloadTask::cancel()
 {
     if (m_terminal) return;
     m_cancelRequested = true;
-    if (m_probeReply && m_probeReply->isRunning()) m_probeReply->abort();
-    if (m_singleReply && m_singleReply->isRunning()) m_singleReply->abort();
+    if (m_probeReply && m_probeReply->isRunning()) {
+        QMetaObject::invokeMethod(m_probeReply.data(), "abort", Qt::QueuedConnection);
+    }
+    if (m_singleReply && m_singleReply->isRunning()) {
+        QMetaObject::invokeMethod(m_singleReply.data(), "abort", Qt::QueuedConnection);
+    }
     stopSegmentRequests();
 
     const bool pending = isActiveReply(m_probeReply) || isActiveReply(m_singleReply)
@@ -1082,6 +1175,9 @@ void DownloadTask::cancel()
             [](const Segment &segment) { return isActiveReply(segment.reply); });
     if (!pending) {
         if (m_singleFile && m_singleFile->isOpen()) m_singleFile->close();
+        for (Segment &segment : m_segments) {
+            if (segment.file && segment.file->isOpen()) segment.file->close();
+        }
         clearSegmentDirectory();
         QFile::remove(partialPath());
         m_download.downloadedBytes = 0;
@@ -1092,15 +1188,25 @@ void DownloadTask::cancel()
 void DownloadTask::fail(const QString &error)
 {
     if (m_terminal) return;
-    if (m_probeReply && m_probeReply->isRunning()) m_probeReply->abort();
-    if (m_singleReply && m_singleReply->isRunning()) m_singleReply->abort();
+    if (m_probeReply && m_probeReply->isRunning()) {
+        QMetaObject::invokeMethod(m_probeReply.data(), "abort", Qt::QueuedConnection);
+    }
+    if (m_singleReply && m_singleReply->isRunning()) {
+        QMetaObject::invokeMethod(m_singleReply.data(), "abort", Qt::QueuedConnection);
+    }
     stopSegmentRequests();
     if (m_singleFile && m_singleFile->isOpen()) {
         m_singleFile->flush();
         m_singleFile->close();
     }
+    for (Segment &segment : m_segments) {
+        if (segment.file && segment.file->isOpen()) {
+            segment.file->flush();
+            segment.file->close();
+        }
+    }
     updateProgress(true);
-    saveManifest();
+    (void)saveManifest();
     finish(DownloadStatus::Failed, error);
 }
 
