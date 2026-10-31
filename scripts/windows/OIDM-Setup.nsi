@@ -19,7 +19,10 @@ Name "OIDM - Open Internet Download Manager"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\OIDM"
 RequestExecutionLevel user
-SetCompressor /SOLID lzma
+; LZMA produced a mismatching self-CRC in the 0.4.1 Windows cross-build.
+; zlib solid has been verified with NSIS internal CRC and 7-Zip extraction.
+SetCompressor /SOLID zlib
+CRCCheck force
 ShowInstDetails show
 ShowUninstDetails show
 BrandingText "ThowiLabs | Open Internet Download Manager"

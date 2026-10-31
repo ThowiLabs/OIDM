@@ -9,6 +9,8 @@ only the libraries they reference plus explicitly required Qt runtime plugins.
 import argparse
 import hashlib
 import json
+import struct
+import zlib
 import re
 import shutil
 import subprocess
@@ -24,6 +26,33 @@ def imports(path: Path) -> set[str]:
     if "file format pei-x86-64" not in output:
         raise ValueError(f"Not a 64-bit Windows PE: {path}")
     return set(DLL_RE.findall(output))
+
+
+def verify_nsis_crc(path: Path) -> str:
+    """Validate NSIS' own CRC32, NOT just the packed files via 7-Zip.
+
+    NSIS skips the first 512 bytes (DOS stub) and stores its CRC32 as the
+    final dword. An otherwise extractable installer can still fail at launch
+    when its checksum differs. Never skip the check for release artifacts.
+    """
+    payload = path.read_bytes()
+    header = next((offset for offset in range(0, min(len(payload) - 28, 1024 * 1024), 512)
+                   if payload[offset + 4:offset + 8] == b"\xef\xbe\xad\xde"
+                   and payload[offset + 8:offset + 20] == b"NullsoftInst"), None)
+    if header is None:
+        raise ValueError(f"Not a valid NSIS installer: {path}")
+    flags = struct.unpack_from("<I", payload, header)[0]
+    if flags & 4:
+        raise ValueError("NSIS CRC verification is disabled; refusing to publish installer")
+    data_len = struct.unpack_from("<i", payload, header + 24)[0]
+    checksum_offset = header + data_len - 4
+    if checksum_offset + 4 != len(payload):
+        raise ValueError(f"NSIS archive is truncated or contains unexpected trailing data: {path}")
+    recorded = struct.unpack_from("<I", payload, checksum_offset)[0]
+    actual = zlib.crc32(payload[512:checksum_offset]) & 0xFFFFFFFF
+    if actual != recorded:
+        raise ValueError(f"NSIS integrity failure: CRC recorded {recorded:08x} != calculated {actual:08x}")
+    return f"{actual:08x}"
 
 
 def main() -> None:
@@ -182,7 +211,13 @@ def main() -> None:
         ], check=True)
         if not installer.is_file():
             raise FileNotFoundError(installer)
+        crc = verify_nsis_crc(installer)
+        with ZipFile(installer.parent / f"OIDM-Windows-x64-v{version}-Setup.zip", "w", ZIP_DEFLATED,
+                     compresslevel=6) as packaged_installer:
+            packaged_installer.write(installer, arcname=installer.name)
         print(f"INSTALLER: {installer} ({installer.stat().st_size} bytes)")
+        print(f"NSIS CRC32: {crc} (verified)")
+        print(f"INSTALLER SHA256: {hashlib.sha256(installer.read_bytes()).hexdigest()}")
     else:
         print("INSTALLER: NSIS missing; portable ZIP only")
     checksum = hashlib.sha256(zip_path.read_bytes()).hexdigest()

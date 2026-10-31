@@ -76,3 +76,9 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Se elimina el requisito erróneo ETag / Last-Modified para iniciar seis rangos simultáneos dentro de una sesión. Se conserva el requisito para **reanudar fragmentos guardados** de otra sesión.
 - El tamaño mínimo para dividir es 768 KiB; la ventana de progreso indica motivo del fallback.
 - Prueba `parallelWithoutEtags`: seis respuestas `206` concurrentes sin validadores; reconstrucción exacta y limpieza.
+
+## Integridad del instalador (31-oct-2026)
+
+- Reproducido y corregido el error NSIS *Installer integrity check has failed*: el instalador con LZMA entregaba CRC interno inconsistente; Zlib solid produce CRC válido.
+- CRCCheck force y prueba previa a compartir el instalador, con verificación Python independiente del CRC (la extracción 7z sola era insuficiente).
+- Prueba de instalación Windows bajo Wine y `--ui-self-test` exitosa, ejecutable instalado idéntico al compilado.

@@ -117,3 +117,11 @@ El motor de la versión 0.4.0 exigía equivocadamente `ETag` fuerte o `Last-Modi
 La prueba `parallelWithoutEtags` crea un servidor HTTP que devuelve `206 Partial Content` pero omite `ETag`/`Last-Modified`. Comprueba seis solicitudes de rangos superpuestas, reconstrución byte a byte y limpieza de temporales. Sigue existiendo el límite técnico: no podemos forzar rangos si el origen ignora `Range`, si la URL ya expiró o si un servidor responde HTTP 200.
 
 Para evitar confundir varios rangos HTTP/2 multiplexados con una sola conexión TCP, las solicitudes de segmentos se envían con HTTP/2 deshabilitado, de modo que Qt puede utilizar sockets HTTP/1.1 independientes. El número efectivo puede ser menor si el servidor impone límites; OIDM no puede forzar servidores incompatibles.
+
+## Corrección del instalador Windows NSIS (0.4.1, empaquetado corregido)
+
+Se detectó que el instalador generado previamente con `SetCompressor /SOLID lzma` podía contener un **CRC32 NSIS inválido** pese a que `7z t` extrajera sus ficheros sin errores. Esto provocaba el mensaje **"Installer integrity check has failed"** al ejecutarlo en Windows. La causa se reprodujo leyendo el `firstheader` y comparando el CRC almacenado con el CRC real.
+
+Ahora se genera con `SetCompressor /SOLID zlib` y `CRCCheck force`; el empaquetador `scripts/package_windows_cross.py` inspecciona el encabezado NSIS, rechaza el instalador cuando el CRC no coincide y entrega el `.exe` junto con un `.zip` alternativo que contiene el mismo instalador. El test de regresión `python3 -m unittest discover -s tests -p test_windows_packaging.py` valida que una alteración de un solo byte provoque un fallo. **No se deshabilita la verificación de integridad ni se pide usar `/NCRC`.**
+
+Se verificó el instalador corregido mediante CRC NSIS, `7z t`, instalación silenciosa bajo Wine, comparación byte a byte del `OIDM.exe` instalado con el compilado y prueba `--ui-self-test` exitosa. La versión de aplicación sigue siendo 0.4.1; cambió únicamente el empaquetado del instalador, que es más grande debido a la compresión Zlib. Para detectar una descarga modificada también conviene comparar el SHA256 del archivo recibido con el publicado junto al enlace.
