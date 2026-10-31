@@ -10,9 +10,13 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QTableView>
+#include <QTimer>
+#include <QSettings>
+#include <QPushButton>
 #include <QTreeWidget>
 #include <QMessageBox>
 #include "ui/download_progress_dialog.h"
+#include "ui/browser_setup_dialog.h"
 #include <QProcess>
 #include <QFileInfo>
 #include "integration/browser_extension_id.h"
@@ -30,6 +34,9 @@ int runUiSelfTest()
     DownloadRepository repository(temporary.filePath(QStringLiteral("ui.sqlite3")));
     if (!repository.isOpen()) return 21;
     MainWindow window(&repository);
+    BrowserSetupDialog setup(&window);
+    if (!setup.findChild<QPushButton *>(QStringLiteral("prepareBrowserIntegration"))
+        || !setup.findChild<QPushButton *>(QStringLiteral("setupExtensionFolder"))) return 28;
     QString id;
     QString error;
     const bool accepted = window.enqueueFromBrowser(
@@ -176,5 +183,11 @@ int main(int argc, char *argv[])
         return 4;
     }
     window.show();
+    QSettings settings;
+    const bool explicitSetup = application.arguments().contains(QStringLiteral("--setup-browser"));
+    if (explicitSetup || !settings.value(QStringLiteral("browser/integrationOffered"), false).toBool()) {
+        settings.setValue(QStringLiteral("browser/integrationOffered"), true);
+        QTimer::singleShot(0, &window, &oidm::MainWindow::openBrowserSetup);
+    }
     return application.exec();
 }

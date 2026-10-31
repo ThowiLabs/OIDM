@@ -1,6 +1,9 @@
-# OIDM — Integración Chrome y Edge, versión 0.1.2
+# OIDM — integración con Chrome / Edge
 
-## Instalación portable para Windows
+**Recomendado en Windows:** instala `OIDM-Windows-x64-v0.3.0-Setup.exe`. El instalador coloca los archivos de la extensión, registra el host nativo y abre un asistente que te lleva a la página de extensiones del navegador. Chrome/Edge exige una autorización final para cargar la extensión local. No hay que copiar IDs ni ejecutar comandos.
+
+
+## Método portable alternativo para Windows
 
 1. Extrae **todo** el archivo ZIP de OIDM a una carpeta. No ejecutes desde dentro del ZIP.
 2. Abre `OIDM.exe`. Desde esta versión el programa registra automáticamente en el usuario actual su host nativo para Chrome y Edge.
@@ -23,3 +26,11 @@ ID fijo de la extensión: `ciipklijloaknncdmnlnnoimjfcllohi`.
 La extensión intercepta automáticamente descargas HTTP/HTTPS iniciadas en el navegador (incluido MediaFire) cuando pueden pausarse. También ofrece **Descargar con OIDM** en el menú contextual. Nunca transmite contraseñas, cookies ni cabeceras de autenticación; algunos archivos privados o protegidos por sesión podrían fallar, en cuyo caso debe usarse la descarga normal del navegador. Los enlaces de página compartida de MediaFire son páginas HTML: lo que OIDM debe descargar es la URL de archivo que se genera al pulsar su botón de descarga. Los contenidos DRM no se interceptan ni se descifran.
 
 No es necesario instalar Qt ni ejecutar el host de forma permanente. Puede deshabilitarse la interceptación automática cambiando `automaticInterception` a `false` en el almacenamiento local de la extensión.
+
+## Instalación mediante asistente (Windows, 0.3.0)
+
+Descarga y ejecuta `OIDM-Windows-x64-v0.3.0-Setup.exe` con tu cuenta normal de Windows (no requiere Administrador). El instalador coloca OIDM y su extensión en una ruta estable, configura los accesos de inicio y registra el host nativo. En la última pantalla deja seleccionada la opción **Abrir OIDM y conectar Chrome / Edge**.
+
+En el asistente de OIDM pulsa **Preparar y comprobar conexión**, después **Abrir Chrome** o **Abrir Edge**, habilita el modo de desarrollador y usa **Cargar descomprimida** para seleccionar la carpeta de extensión que OIDM abre o copia automáticamente al portapapeles. Es el único paso manual requerido por las restricciones de las extensiones no publicadas en Chrome Web Store / Microsoft Edge Add-ons. Al hacer clic en el icono de la extensión instalada debería responder **OIDM conectado**.
+
+Si necesitas abrir de nuevo el asistente: **Ayuda → Instalar / conectar extensión Chrome y Edge**. Para instalar con un único clic desde la tienda, primero habría que publicar allí la extensión, algo que requiere una cuenta de desarrollador y aprobación de la tienda.

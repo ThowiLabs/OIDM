@@ -169,6 +169,22 @@ def main() -> None:
         for path in sorted(root.rglob("*")):
             if path.is_file():
                 archive.write(path, arcname=Path("OIDM-Windows-x64") / path.relative_to(root))
+    # A conventional per-user setup.exe can be produced in the same Linux
+    # pipeline when NSIS is installed. Chrome itself still asks the user to
+    # approve an unpacked extension; this installer does not bypass browser policy.
+    nsis = shutil.which("makensis")
+    if nsis:
+        installer = output / f"OIDM-Windows-x64-v{version}-Setup.exe"
+        subprocess.run([
+            nsis, "-V2", f"-DSOURCE_DIR={root}",
+            f"-DAPP_VERSION={version}", f"-DOUTPUT_FILE={installer}",
+            str(repo / "scripts" / "windows" / "OIDM-Setup.nsi")
+        ], check=True)
+        if not installer.is_file():
+            raise FileNotFoundError(installer)
+        print(f"INSTALLER: {installer} ({installer.stat().st_size} bytes)")
+    else:
+        print("INSTALLER: NSIS missing; portable ZIP only")
     checksum = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     print(f"PACKAGED: {zip_path}")
     print(f"BYTES: {zip_path.stat().st_size}")

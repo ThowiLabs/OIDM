@@ -27,7 +27,7 @@ Not implemented yet:
 - Adaptive connection tuning and benchmarked acceleration (actual speed-up depends on the server and connection).
 - FTP support, advanced proxy/SOCKS controls, authentication manager, scheduled queues, and speed limits.
 - Firefox integration and interception of downloads that never produce Chrome's standard `downloads.onCreated` event.
-- HLS/DASH parsing, video detection, Link Grabber, and platform packaging.
+- HLS/DASH parsing, video detection, Link Grabber, and signed Windows installer releases (an unsigned NSIS preview installer and portable Windows build now exist).
 - GUI-independent disk assembly for huge downloads; segmented assembly currently runs synchronously in the Qt event loop.
 
 OIDM now has an initial working parallel segmented engine, verified against local HTTP test fixtures. This is **not yet full IDM feature parity**, and the actual speed increase depends on server limits, latency and available bandwidth. Large-file assembly and disk I/O performance still need optimization and stress tests.
@@ -53,7 +53,7 @@ ctest --test-dir build --output-on-failure
 
 ## Build on Windows
 
-Use Qt 6.6+ with the MSVC or MinGW kit matching the compiler, CMake, and Ninja. Configure and build from the same CMake source tree. Windows deployment and portable packaging will be added after the core transfer and platform integration are validated.
+Use Qt 6.6+ with the MSVC or MinGW kit matching the compiler, CMake, and Ninja. Configure and build from the same CMake source tree. Windows packaging is available as **portable ZIP** or a **per-user NSIS installer**; see the installation section below.
 
 ## Browser extension (preview)
 
@@ -81,3 +81,15 @@ The packaging script verifies imported PE dependencies and includes the Qt Windo
 ### Diagnóstico de errores de host nativo (Windows)
 
 Si la extensión muestra **"Specified native messaging host not found"**, el error ocurre *antes* de que MediaFire pueda enviarse al programa. Utiliza **Ayuda → Reparar integración Chrome / Edge...** dentro de OIDM y pega el ID actual (32 letras) de tu extensión instalada. Alternativamente ejecuta `CONFIGURAR-INTEGRACION.cmd`, que ofrece registro y verificación automática. El comando `oidm-native-host.exe --diagnose-chromium <id>` comprueba el manifiesto, el ejecutable, el ID autorizado y las dos claves del Registro HKCU. Los IDs que el usuario registró manualmente se conservan en ejecuciones posteriores. **No ejecutes la reparación como administrador** si normalmente abres Chrome con tu cuenta habitual.
+
+## Instalación guiada de Chrome y Edge (0.3.0)
+
+En Windows utiliza el archivo `OIDM-Windows-x64-v0.3.0-Setup.exe`: el instalador NSIS se ejecuta **sin privilegios de administrador**, instala el ejecutable, la extensión y las dependencias de Qt bajo `%LOCALAPPDATA%\Programs\OIDM`, registra el Native Messaging host en HKCU y añade accesos al menú Inicio. Al finalizar, abre OIDM con el asistente de conexión. El primer inicio del paquete portable también ofrece el asistente. En cualquier momento está disponible en **Ayuda → Instalar / conectar extensión Chrome y Edge**.
+
+El asistente comprueba la integración, detecta Chrome/Edge instalados, abre directamente `chrome://extensions` / `edge://extensions`, ofrece mostrar la carpeta de la extensión y copia su ruta al portapapeles. El usuario solamente activa modo desarrollador, pulsa *Cargar descomprimida* y selecciona la carpeta mostrada. No necesita copiar el ID de la extensión, modificar el registro ni ejecutar CMD. Los registros preexistentes pueden repararse por separado.
+
+**Restricción de Chrome/Edge**: en Windows, las extensiones distribuidas fuera de la Chrome Web Store / Edge Add-ons no pueden instalarse silenciosamente desde una aplicación normal. Una verdadera instalación de un clic requerirá publicar la extensión en la tienda y pedir al usuario que confirme su instalación. OIDM no modifica las políticas empresariales del navegador ni altera preferencias de Chrome para eludir esta protección. <https://developer.chrome.com/docs/extensions/how-to/distribute>
+
+La desinstalación elimina los archivos y accesos instalados y desregistra el host **solo si ese host pertenece a esta instalación**; conserva los datos de descargas y el historial del usuario. La extensión puede seguir apareciendo en Chrome y debe retirarse desde `chrome://extensions` si el usuario desea quitarla.
+
+Para generar ambos entregables desde Linux se necesita `makensis` además de Qt/MinGW. La orden `python3 scripts/package_windows_cross.py --qt ... --build ... --output dist` produce el ZIP y el instalador NSIS cuando `makensis` está disponible.

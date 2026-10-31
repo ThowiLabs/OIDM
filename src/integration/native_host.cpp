@@ -263,6 +263,36 @@ int registerChromiumHost(const QString &extensionId) {
     return 0;
 }
 
+int unregisterChromiumHost() {
+#ifdef Q_OS_WIN
+    const QString manifestPath = hostManifestPath();
+    const QJsonObject manifest = readHostManifest(manifestPath);
+    const QString registeredExe = manifest.value(QStringLiteral("path")).toString();
+    if (registeredExe.compare(QCoreApplication::applicationFilePath(), Qt::CaseInsensitive) != 0) {
+        qWarning("OIDM: host manifest belongs to another installation. Registry preserved.");
+        return 0;
+    }
+    for (const QString &key : nativeHostRegistryKeys()) {
+        QString error;
+        if (readRegistryManifestPath(key, &error).compare(manifestPath, Qt::CaseInsensitive) != 0) continue;
+        const std::wstring registryKey = key.toStdWString();
+        const LONG removed = RegDeleteTreeW(HKEY_CURRENT_USER, registryKey.c_str());
+        if (removed != ERROR_SUCCESS && removed != ERROR_FILE_NOT_FOUND) {
+            qWarning("Could not unregister OIDM host (Win32=%ld)", removed);
+            return 5;
+        }
+    }
+    if (!QFile::remove(manifestPath)) {
+        qWarning("Unable to remove native host manifest: %s", qPrintable(manifestPath));
+        return 6;
+    }
+    return 0;
+#else
+    qInfo("Linux native host must be deregistered from browser config dirs manually.");
+    return 0;
+#endif
+}
+
 QJsonObject forwardToApp(const QJsonObject &message) {
     const QString type = message.value(QStringLiteral("type")).toString();
     if (type != QStringLiteral("enqueue") && type != QStringLiteral("ping")) {
@@ -311,6 +341,9 @@ int main(int argc, char **argv) {
     QCoreApplication::setOrganizationDomain(QStringLiteral("thowilabs.com"));
     QCoreApplication::setApplicationName(QStringLiteral("OIDM"));
     const QStringList arguments = app.arguments();
+    if (arguments.contains(QStringLiteral("--unregister-chromium"))) {
+        return unregisterChromiumHost();
+    }
     if (arguments.contains(QStringLiteral("--diagnose-chromium"))) {
         const int index = arguments.indexOf(QStringLiteral("--diagnose-chromium"));
         if (index + 1 >= arguments.size()) return 2;

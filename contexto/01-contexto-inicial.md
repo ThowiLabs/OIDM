@@ -80,3 +80,11 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Referrer HTTP/HTTPS validado y persistido en SQLite mediante migración de esquema, enviado como encabezado al descargar.
 - Integración real Windows bajo Wine probada de extremo a extremo: Native Messaging enqueue, app Qt, descarga a Downloads y propagación de Referer; no se verificó el sitio real MediaFire.
 - La extensión anterior era solo de menú contextual y sin registro automático; es imprescindible eliminarla y cargar la nueva incluida en el ZIP.
+
+## Beta OIDM 0.3.0, instalación integrada 31-oct-2026
+
+- UI oscura nativa clásica realizada en Qt Widgets, motor C++20.
+- Asistente Qt de integración Chrome/Edge, sin scripts ni IDs manuales; detecta navegador, abre página de extensiones, ruta copiada al portapapeles.
+- Instalador real Windows NSIS por usuario, portable ZIP, registro host nativo HKCU y desinstalación conservadora que mantiene datos del usuario.
+- Chrome/Edge requieren confirmación explícita al cargar extensión sin publicar en Store. Queda pendiente publicación oficial para UX de instalación aún más simple.
+- Pruebas en Wine de instalación, registro, ejecuciones de smoke UI, desinstalación y preservación de datos correctas.

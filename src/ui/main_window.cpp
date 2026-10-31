@@ -4,6 +4,7 @@
 #include "ui/add_download_dialog.h"
 #include "ui/progress_delegate.h"
 #include "ui/download_progress_dialog.h"
+#include "ui/browser_setup_dialog.h"
 #include "integration/browser_extension_id.h"
 
 #include <QAction>
@@ -147,6 +148,8 @@ void MainWindow::createMenusAndToolbar()
     QMenu *toolsMenu = menuBar()->addMenu(tr("Herramientas"));
     toolsMenu->addAction(tr("Iniciar cola"), m_manager, &DownloadManager::startQueued);
     QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
+    helpMenu->addAction(tr("Instalar / conectar extensión Chrome y Edge..."), this,
+                        &MainWindow::openBrowserSetup);
     helpMenu->addAction(tr("Reparar integración Chrome / Edge..."), this,
                         &MainWindow::repairBrowserIntegration);
     helpMenu->addAction(tr("Acerca de OIDM"), this, [this] {
@@ -463,6 +466,12 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
         statusBar()->showMessage(tr("Descarga recibida desde el navegador: %1").arg(download.fileName), 7000);
     }
     return true;
+}
+
+void MainWindow::openBrowserSetup()
+{
+    BrowserSetupDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::repairBrowserIntegration()

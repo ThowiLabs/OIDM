@@ -49,3 +49,11 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Descarga aceptada por el host nativo: guardada en SQLite, visible inmediatamente bajo Todas las descargas, seleccionada, con detalle de transferencia abierto; la aplicación se trae al frente cuando lo permite el SO.
 - Estado de error de transferencia conservado en la tabla. Verificación automática `oidm --ui-self-test` valida persistencia, selección y diálogo.
 - Si hay dos instancias, la segunda no permanece abierta con lista vacía: intenta activar la instancia dueña del socket y muestra advertencia de versiones anteriores.
+
+## Asistente e instalador de usuario (31-oct-2026)
+
+- Beta 0.3.0: asistente Qt `BrowserSetupDialog` con registro de host nativo, diagnóstico, detección de Chrome/Edge, navegación a `chrome://extensions`/`edge://extensions`, apertura de carpeta y copia automática de ruta. Se ofrece en el primer inicio o en Ayuda.
+- Instalador NSIS de usuario (no administrador) en `%LOCALAPPDATA%/Programs/OIDM`: coloca aplicación, extensión y dependencias Qt; registra host, crea accesos directos y ejecuta asistente al terminar. También se mantiene ZIP portable.
+- Desinstalación validada en Wine: eliminó archivos y registro HKCU del host instalado, manteniendo datos/historial. Rehúsa borrar registros ajenos de otras instalaciones.
+- Chrome/Edge impiden la instalación oculta de extensiones locales en Windows. La activación manual *Cargar descomprimida* es requerida hasta publicación y aprobación en Chrome Web Store / Edge Add-ons; no se fuerza política empresarial ni se escribe en el perfil del navegador.
+- Validación: pruebas Qt y compilación cruzada Windows satisfactorias; instalador y desinstalador probados en Wine, incluida verificación de archivos, registro y prueba de interfaz. Falta validación interactiva con Chrome real en Windows.
