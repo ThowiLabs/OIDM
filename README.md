@@ -84,7 +84,7 @@ Si la extensión muestra **"Specified native messaging host not found"**, el err
 
 ## Instalación guiada de Chrome y Edge (0.3.0)
 
-En Windows utiliza el archivo `OIDM-Windows-x64-v0.3.0-Setup.exe`: el instalador NSIS se ejecuta **sin privilegios de administrador**, instala el ejecutable, la extensión y las dependencias de Qt bajo `%LOCALAPPDATA%\Programs\OIDM`, registra el Native Messaging host en HKCU y añade accesos al menú Inicio. Al finalizar, abre OIDM con el asistente de conexión. El primer inicio del paquete portable también ofrece el asistente. En cualquier momento está disponible en **Ayuda → Instalar / conectar extensión Chrome y Edge**.
+En Windows utiliza el archivo `OIDM-Windows-x64-v0.4.0-Setup.exe`: el instalador NSIS se ejecuta **sin privilegios de administrador**, instala el ejecutable, la extensión y las dependencias de Qt bajo `%LOCALAPPDATA%\Programs\OIDM`, registra el Native Messaging host en HKCU y añade accesos al menú Inicio. Al finalizar, abre OIDM con el asistente de conexión. El primer inicio del paquete portable también ofrece el asistente. En cualquier momento está disponible en **Ayuda → Instalar / conectar extensión Chrome y Edge**.
 
 El asistente comprueba la integración, detecta Chrome/Edge instalados, abre directamente `chrome://extensions` / `edge://extensions`, ofrece mostrar la carpeta de la extensión y copia su ruta al portapapeles. El usuario solamente activa modo desarrollador, pulsa *Cargar descomprimida* y selecciona la carpeta mostrada. No necesita copiar el ID de la extensión, modificar el registro ni ejecutar CMD. Los registros preexistentes pueden repararse por separado.
 
