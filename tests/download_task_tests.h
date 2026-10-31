@@ -8,6 +8,8 @@ private slots:
     void initTestCase();
     void downloadsFullResponse();
     void segmentedTransfersReassembleLargeFiles();
+    void configuredConnections_data();
+    void configuredConnections();
     void fallsBackWhenSegmentRangeIsIgnored();
     void segmentedTransferResumesSavedFragments();
     void resumesFromValidatedRange();

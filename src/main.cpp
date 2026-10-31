@@ -69,6 +69,28 @@ int runUiSelfTest()
     // the prepared record; no network DownloadTask is ever started.
     offer->findChild<QPushButton *>(QStringLiteral("downloadOfferCancel"))->click();
     if (repository.all().size() != 0 || table->model()->rowCount() != 0) return 36;
+
+    // The browser has already released this second transfer. Only clicking
+    // "Iniciar descarga" may turn the persisted record from Queued to Inspecting.
+    QString startedId;
+    if (!window.enqueueFromBrowser(
+            QStringLiteral("http://127.0.0.1:9/oidm-start-test.bin"),
+            QStringLiteral("oidm-start-test.bin"), QString(), 321, true, &startedId, &error)) return 37;
+    if (!window.browserTransferReleased(startedId)) return 38;
+    const auto beforeStart = repository.all();
+    if (beforeStart.size() != 1 || beforeStart.first().status != DownloadStatus::Queued) return 39;
+    DownloadOfferDialog *secondOffer = nullptr;
+    for (DownloadOfferDialog *candidate : window.findChildren<DownloadOfferDialog *>()) {
+        if (candidate->downloadId() == startedId) { secondOffer = candidate; break; }
+    }
+    if (!secondOffer) return 40;
+    auto *startButton = secondOffer->findChild<QPushButton *>(QStringLiteral("downloadOfferStart"));
+    if (!startButton) return 41;
+    startButton->click();
+    const auto afterStart = repository.all();
+    if (afterStart.size() != 1 || afterStart.first().id != startedId
+        || afterStart.first().status != DownloadStatus::Inspecting) return 42;
+    if (window.findChildren<DownloadProgressDialog *>().isEmpty()) return 43;
     return 0;
 }
 

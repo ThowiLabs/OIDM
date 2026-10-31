@@ -9,6 +9,8 @@
 #include <QHash>
 #include <QRegularExpression>
 #include <QSignalSpy>
+#include <QSettings>
+#include <QScopeGuard>
 #include <QQueue>
 #include <QPointer>
 #include <QElapsedTimer>
@@ -163,7 +165,13 @@ private:
         }
         case Behavior::RangeResponse:
         case Behavior::WrongRange: {
-            if (offset < 0 || offset >= m_body.size()) {
+            // A server supporting HTTP Range must still support ordinary
+            // GET without a Range header (single-connection mode).
+            if (offset < 0) {
+                output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body);
+                break;
+            }
+            if (offset >= m_body.size()) {
                 output = response(416, "Range Not Satisfiable",
                                   "Content-Range: bytes */" + QByteArray::number(m_body.size()) + "\r\n", {});
                 break;
@@ -401,6 +409,52 @@ void DownloadTaskTests::segmentedTransfersReassembleLargeFiles()
     }
     QCOMPARE(ranges.last().second, static_cast<qint64>(body.size() - 1));
     QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
+}
+
+void DownloadTaskTests::configuredConnections_data()
+{
+    QTest::addColumn<int>("connections");
+    QTest::newRow("sequential-one") << 1;
+    QTest::newRow("two-segments") << 2;
+    QTest::newRow("default-six") << 6;
+    QTest::newRow("twelve-segments") << 12;
+}
+
+void DownloadTaskTests::configuredConnections()
+{
+    QFETCH(int, connections);
+    const QString key = QStringLiteral("transfer/maxConnections");
+    QSettings current;
+    const bool hadOriginal = current.contains(key);
+    const QVariant original = current.value(key);
+    const auto restoreSettings = qScopeGuard([key, hadOriginal, original] {
+        QSettings settings;
+        if (hadOriginal) settings.setValue(key, original);
+        else settings.remove(key);
+    });
+    current.setValue(key, connections);
+    current.sync();
+
+    QByteArray body(5 * 1024 * 1024 + 123, 'o');
+    LocalHttpServer server(body, LocalHttpServer::Behavior::RangeResponse);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("configured.bin"));
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QVERIFY2(finished.wait(20000), "Configurable segmented transfer did not complete");
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QVERIFY2(result.status == DownloadStatus::Completed, qPrintable(result.error));
+    QCOMPARE(readFile(destination), body);
+
+    int segmentRequests = 0;
+    for (const QByteArray &request : server.requests()) {
+        const QByteArray lower = request.toLower();
+        if (lower.contains("range: bytes=") && !lower.contains("range: bytes=0-0")) ++segmentRequests;
+    }
+    QCOMPARE(segmentRequests, connections == 1 ? 0 : connections);
 }
 
 void DownloadTaskTests::fallsBackWhenSegmentRangeIsIgnored()
