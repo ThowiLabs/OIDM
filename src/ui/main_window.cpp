@@ -3,8 +3,13 @@
 #include "core/download_repository.h"
 #include "ui/add_download_dialog.h"
 #include "ui/progress_delegate.h"
+#include "integration/browser_extension_id.h"
 
 #include <QAction>
+#include <QCoreApplication>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QProcess>
 #include <QCloseEvent>
 #include <QFileInfo>
 #include <QDir>
@@ -95,7 +100,9 @@ void MainWindow::createMenusAndToolbar()
 
     menuBar()->addMenu(tr("Ver"));
     menuBar()->addMenu(tr("Colas"));
-    menuBar()->addMenu(tr("Ayuda"));
+    QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
+    helpMenu->addAction(tr("Reparar integración Chrome / Edge..."), this,
+                        &MainWindow::repairBrowserIntegration);
 
     auto *toolbar = addToolBar(tr("Principal"));
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
@@ -254,6 +261,60 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
         statusBar()->showMessage(tr("Descarga en cola: %1").arg(ignored), 4000);
     }
     return true;
+}
+
+void MainWindow::repairBrowserIntegration()
+{
+    bool confirmed = false;
+    const QString extensionId = QInputDialog::getText(
+        this, tr("Reparar integración del navegador"),
+        tr("1. Abre chrome://extensions o edge://extensions.\n"
+           "2. Activa Modo de desarrollador y copia el ID de la extensión OIDM.\n"
+           "3. Confirma o reemplaza este ID:"),
+        QLineEdit::Normal, QStringLiteral(OIDM_CHROMIUM_EXTENSION_ID), &confirmed).trimmed();
+    if (!confirmed) return;
+    static const QRegularExpression idPattern(QStringLiteral("^[a-p]{32}$"));
+    if (!idPattern.match(extensionId).hasMatch()) {
+        QMessageBox::warning(this, tr("ID inválido"),
+            tr("El ID de Chrome o Edge debe contener exactamente 32 letras de a a p."));
+        return;
+    }
+    const QString host = QDir(QCoreApplication::applicationDirPath()).filePath(
+#ifdef Q_OS_WIN
+        QStringLiteral("oidm-native-host.exe")
+#else
+        QStringLiteral("oidm-native-host")
+#endif
+    );
+    if (!QFileInfo(host).isFile()) {
+        QMessageBox::warning(this, tr("Host no encontrado"),
+            tr("No se encuentra oidm-native-host al lado de OIDM.\n"
+               "Extrae el ZIP completo e inicia OIDM desde la misma carpeta."));
+        return;
+    }
+    QProcess registration;
+    registration.setProgram(host);
+    registration.setArguments({QStringLiteral("--register-chromium"), extensionId});
+    registration.start();
+    if (!registration.waitForStarted(2000) || !registration.waitForFinished(4000)
+        || registration.exitStatus() != QProcess::NormalExit || registration.exitCode() != 0) {
+        QMessageBox::critical(this, tr("No se pudo registrar la extensión"),
+            tr("Falló el registro nativo de Chrome/Edge.\n"
+               "Usa CONFIGURAR-INTEGRACION.cmd para ver el diagnóstico."));
+        return;
+    }
+    QProcess diagnostic;
+    diagnostic.start(host, {QStringLiteral("--diagnose-chromium"), extensionId});
+    if (!diagnostic.waitForFinished(4000) || diagnostic.exitCode() != 0) {
+        QMessageBox::warning(this, tr("Integración incompleta"),
+            tr("Se creó el registro, pero no pasó la comprobación.\n"
+               "Ejecuta CONFIGURAR-INTEGRACION.cmd para ver el detalle."));
+        return;
+    }
+    QMessageBox::information(this, tr("Integración registrada"),
+        tr("OIDM registró el host para el ID %1.\n\n"
+           "Recarga la extensión en chrome://extensions o edge://extensions, "
+           "y haz clic en su icono para comprobar la conexión.").arg(extensionId));
 }
 
 void MainWindow::addDownload()

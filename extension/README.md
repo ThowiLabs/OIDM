@@ -1,4 +1,4 @@
-# OIDM — Integración Chrome y Edge, versión 0.1.1
+# OIDM — Integración Chrome y Edge, versión 0.1.2
 
 ## Instalación portable para Windows
 
@@ -12,9 +12,9 @@
 ### Si no conecta
 
 - Cierra las instancias antiguas de OIDM y vuelve a abrir `OIDM.exe` desde la nueva carpeta.
-- Ejecuta `CONFIGURAR-INTEGRACION.cmd` dentro de la carpeta portable (no requiere Administrador).
+- En OIDM elige **Ayuda → Reparar integración Chrome / Edge**, pega exactamente el ID mostrado por tu navegador y confirma. O ejecuta `CONFIGURAR-INTEGRACION.cmd` dentro de la carpeta portable, donde verás el registro y diagnóstico. No requiere ni debes usar Administrador: el registro es por usuario.
 - En `chrome://extensions`, asegúrate de que solo tienes la nueva extensión OIDM. Pulsa su botón de **Recargar**.
-- Haz clic en su icono. Si aparece `!`, abre la notificación y revisa si el host nativo no está registrado.
+- Haz clic en su icono. Si aparece `!`, abre la notificación y revisa si el host nativo no está registrado. **"Specified native messaging host not found"** o **"No native messaging host"** indica registro o ID faltante, no un error de MediaFire.
 
 ID fijo de la extensión: `ciipklijloaknncdmnlnnoimjfcllohi`.
 

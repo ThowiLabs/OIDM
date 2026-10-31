@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -57,19 +58,166 @@ QJsonObject failure(const QString &reason) {
     return QJsonObject{{QStringLiteral("ok"), false}, {QStringLiteral("error"), reason}};
 }
 
-int registerChromiumHost(const QString &extensionId) {
-    const QRegularExpression idPattern(QStringLiteral("^[a-p]{32}$"));
-    if (!idPattern.match(extensionId).hasMatch()) {
+constexpr auto HostName = "com.thowilabs.oidm";
+
+bool validExtensionId(const QString &id) {
+    static const QRegularExpression pattern(QStringLiteral("^[a-p]{32}$"));
+    return pattern.match(id).hasMatch();
+}
+
+QString hostManifestPath() {
+#ifdef Q_OS_WIN
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/com.thowilabs.oidm.json");
+#else
+    return {};
+#endif
+}
+
+#ifdef Q_OS_WIN
+QStringList nativeHostRegistryKeys() {
+    return {
+        QStringLiteral("Software\\Google\\Chrome\\NativeMessagingHosts\\com.thowilabs.oidm"),
+        QStringLiteral("Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.thowilabs.oidm")
+    };
+}
+
+// Registry values must be read via Win32 (not Qt's ini-style registry fallback).
+QString readRegistryManifestPath(const QString &keyPath, QString *error) {
+    HKEY key = nullptr;
+    const std::wstring path = keyPath.toStdWString();
+    const LONG opened = RegOpenKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, KEY_QUERY_VALUE, &key);
+    if (opened != ERROR_SUCCESS) {
+        if (error) *error = QStringLiteral("Falta registro HKCU\\%1 (error %2)").arg(keyPath).arg(opened);
+        return {};
+    }
+    DWORD type = 0;
+    DWORD bytes = 0;
+    LONG result = RegQueryValueExW(key, nullptr, nullptr, &type, nullptr, &bytes);
+    if (result != ERROR_SUCCESS || type != REG_SZ || bytes < sizeof(wchar_t) || bytes > 32768) {
+        RegCloseKey(key);
+        if (error) *error = QStringLiteral("Registro de host inválido: %1").arg(keyPath);
+        return {};
+    }
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(bytes / sizeof(wchar_t)) + 1, 0);
+    result = RegQueryValueExW(key, nullptr, nullptr, &type,
+        reinterpret_cast<LPBYTE>(buffer.data()), &bytes);
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS || type != REG_SZ) {
+        if (error) *error = QStringLiteral("No se pudo leer el registro de host: %1").arg(keyPath);
+        return {};
+    }
+    return QDir::fromNativeSeparators(QString::fromWCharArray(buffer.data()));
+}
+
+bool writeRegistryManifestPath(const QString &keyPath, const QString &manifestPath) {
+    HKEY key = nullptr;
+    const std::wstring wideKey = keyPath.toStdWString();
+    const LONG created = RegCreateKeyExW(HKEY_CURRENT_USER, wideKey.c_str(), 0,
+        nullptr, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, nullptr);
+    if (created != ERROR_SUCCESS) {
+        qWarning("Could not create NativeMessagingHosts key (Win32=%ld)", created);
+        return false;
+    }
+    const std::wstring widePath = QDir::toNativeSeparators(manifestPath).toStdWString();
+    const LONG written = RegSetValueExW(key, nullptr, 0, REG_SZ,
+        reinterpret_cast<const BYTE *>(widePath.c_str()),
+        static_cast<DWORD>((widePath.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
+    if (written != ERROR_SUCCESS) {
+        qWarning("Could not write NativeMessagingHosts key (Win32=%ld)", written);
+    }
+    return written == ERROR_SUCCESS;
+}
+#endif
+
+QJsonObject readHostManifest(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 32 * 1024) return {};
+    const QJsonDocument parsed = QJsonDocument::fromJson(file.readAll());
+    return parsed.isObject() ? parsed.object() : QJsonObject{};
+}
+
+int diagnoseChromiumHost(const QString &extensionId) {
+    if (!validExtensionId(extensionId)) {
         qCritical("Invalid extension ID; expected 32 lowercase a-p characters.");
         return 2;
     }
+#ifdef Q_OS_WIN
+    const QString manifestPath = hostManifestPath();
+    const QJsonObject manifest = readHostManifest(manifestPath);
+    const QString expectedOrigin = QStringLiteral("chrome-extension://%1/").arg(extensionId);
+    bool ok = true;
+    if (manifest.value(QStringLiteral("name")).toString() != QString::fromLatin1(HostName)
+        || manifest.value(QStringLiteral("type")).toString() != QStringLiteral("stdio")) {
+        qCritical("FAIL: Native Messaging host manifest is missing or invalid.");
+        ok = false;
+    } else {
+        qInfo("OK: Native Messaging manifest exists.");
+    }
+    const QString manifestExe = manifest.value(QStringLiteral("path")).toString();
+    if (!QFileInfo(manifestExe).isFile()) {
+        qCritical("FAIL: Native Messaging executable not found: %s", qPrintable(manifestExe));
+        ok = false;
+    } else {
+        qInfo("OK: Host executable exists: %s", qPrintable(manifestExe));
+    }
+    bool allowed = false;
+    for (const auto &origin : manifest.value(QStringLiteral("allowed_origins")).toArray()) {
+        if (origin.toString() == expectedOrigin) allowed = true;
+    }
+    if (!allowed) {
+        qCritical("FAIL: Extension ID not allowed in manifest: %s", qPrintable(extensionId));
+        ok = false;
+    } else {
+        qInfo("OK: Extension ID allowed: %s", qPrintable(extensionId));
+    }
+    for (const QString &registryKey : nativeHostRegistryKeys()) {
+        QString error;
+        const QString actual = readRegistryManifestPath(registryKey, &error);
+        if (actual.compare(manifestPath, Qt::CaseInsensitive) != 0) {
+            qCritical("FAIL: %s (%s)", qPrintable(registryKey), qPrintable(error));
+            ok = false;
+        } else {
+            qInfo("OK: %s", qPrintable(registryKey));
+        }
+    }
+    qInfo("Extension ID actual visible in chrome://extensions MUST match: %s", qPrintable(extensionId));
+    return ok ? 0 : 5;
+#else
+    qInfo("Native host registry diagnostics are available in Windows only.");
+    return 0;
+#endif
+}
 
-    QJsonObject manifest{
-        {QStringLiteral("name"), QStringLiteral("com.thowilabs.oidm")},
+int registerChromiumHost(const QString &extensionId) {
+    if (!validExtensionId(extensionId)) {
+        qCritical("Invalid extension ID; expected 32 lowercase a-p characters.");
+        return 2;
+    }
+    const QString applicationPath = QCoreApplication::applicationFilePath();
+    QJsonArray origins;
+    const QString currentOrigin = QStringLiteral("chrome-extension://%1/").arg(extensionId);
+    origins.append(currentOrigin);
+#ifdef Q_OS_WIN
+    // Preserve other extension IDs the user explicitly registered. Otherwise
+    // automatic registration on app startup would undo a manual repair.
+    const QJsonObject prior = readHostManifest(hostManifestPath());
+    if (prior.value(QStringLiteral("path")).toString().compare(applicationPath, Qt::CaseInsensitive) == 0) {
+        for (const QJsonValue &value : prior.value(QStringLiteral("allowed_origins")).toArray()) {
+            const QString origin = value.toString();
+            if (!origin.startsWith(QStringLiteral("chrome-extension://")) || !origin.endsWith(QLatin1Char('/'))) continue;
+            const QString id = origin.mid(19, origin.size() - 20);
+            if (validExtensionId(id) && !origins.contains(origin)) origins.append(origin);
+        }
+    }
+#endif
+    const QJsonObject manifest{
+        {QStringLiteral("name"), QString::fromLatin1(HostName)},
         {QStringLiteral("description"), QStringLiteral("OIDM native download bridge")},
-        {QStringLiteral("path"), QCoreApplication::applicationFilePath()},
+        {QStringLiteral("path"), applicationPath},
         {QStringLiteral("type"), QStringLiteral("stdio")},
-        {QStringLiteral("allowed_origins"), QJsonArray{QStringLiteral("chrome-extension://%1/").arg(extensionId)}}
+        {QStringLiteral("allowed_origins"), origins}
     };
     const QByteArray payload = QJsonDocument(manifest).toJson(QJsonDocument::Indented);
 
@@ -80,37 +228,21 @@ int registerChromiumHost(const QString &extensionId) {
         if (file.write(payload) != payload.size()) { file.cancelWriting(); return false; }
         return file.commit();
     };
-
 #ifdef Q_OS_WIN
-    const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-        + QStringLiteral("/com.thowilabs.oidm.json");
+    const QString path = hostManifestPath();
     if (!saveManifest(path)) {
         qCritical("Could not write the native host manifest.");
         return 3;
     }
-    const QStringList registryPaths{
-        QStringLiteral("Software\\Google\\Chrome\\NativeMessagingHosts\\com.thowilabs.oidm"),
-        QStringLiteral("Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.thowilabs.oidm")
-    };
-    const std::wstring widePath = QDir::toNativeSeparators(path).toStdWString();
     int succeeded = 0;
-    for (const QString &registryPath : registryPaths) {
-        HKEY key = nullptr;
-        const std::wstring wideRegistryPath = registryPath.toStdWString();
-        const LONG created = RegCreateKeyExW(HKEY_CURRENT_USER, wideRegistryPath.c_str(), 0,
-            nullptr, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, nullptr);
-        if (created != ERROR_SUCCESS) continue;
-        const LONG written = RegSetValueExW(key, nullptr, 0, REG_SZ,
-            reinterpret_cast<const BYTE *>(widePath.c_str()),
-            static_cast<DWORD>((widePath.size() + 1) * sizeof(wchar_t)));
-        RegCloseKey(key);
-        if (written == ERROR_SUCCESS) ++succeeded;
+    for (const QString &key : nativeHostRegistryKeys()) {
+        if (writeRegistryManifestPath(key, path)) ++succeeded;
     }
-    if (succeeded == 0) {
-        qCritical("Could not register native messaging for Chrome or Edge.");
+    if (succeeded != 2) {
+        qCritical("Could not register native messaging for Chrome and Edge.");
         return 4;
     }
-    qInfo("OIDM Native Messaging registered for %d Chromium browsers.", succeeded);
+    qInfo("OIDM Native Messaging registered for Chrome and Edge.");
 #else
     const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
     const QStringList browserFolders{
@@ -179,6 +311,11 @@ int main(int argc, char **argv) {
     QCoreApplication::setOrganizationDomain(QStringLiteral("thowilabs.com"));
     QCoreApplication::setApplicationName(QStringLiteral("OIDM"));
     const QStringList arguments = app.arguments();
+    if (arguments.contains(QStringLiteral("--diagnose-chromium"))) {
+        const int index = arguments.indexOf(QStringLiteral("--diagnose-chromium"));
+        if (index + 1 >= arguments.size()) return 2;
+        return diagnoseChromiumHost(arguments.at(index + 1));
+    }
     if (arguments.contains(QStringLiteral("--register-chromium"))) {
         const int index = arguments.indexOf(QStringLiteral("--register-chromium"));
         if (index + 1 >= arguments.size()) {

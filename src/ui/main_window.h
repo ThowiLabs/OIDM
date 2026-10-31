@@ -26,6 +26,7 @@ protected:
 
 private slots:
     void addDownload();
+    void repairBrowserIntegration();
     void startSelected();
     void startQueue();
     void pauseSelected();

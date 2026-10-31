@@ -36,3 +36,10 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Se conserva el `Referer` informado por el navegador al guardar y solicitar enlaces HTTP/HTTPS, útil para algunos enlaces públicos de MediaFire.
 - Las pruebas automatizadas de extensión y el recorrido host → OIDM → HTTP se validaron localmente; falta validación en Chrome/Edge real contra MediaFire y demás proveedores.
 - **No considerar completada la tarea de navegadores** hasta verificar la instalación real y el manejo de enlaces autenticados.
+
+## Corrección de integración de host (31-oct-2026)
+
+- La beta 0.1.2 agrega interfaz **Ayuda → Reparar integración Chrome/Edge...** para introducir el ID real de extensión, además de `--diagnose-chromium <id>` que valida manifiesto, claves HKCU, host y origen permitido.
+- Registrador Chrome/Edge ahora conserva IDs personalizados previamente registrados (si la ruta de host no cambia) y valida ambas claves, sin exigir admin.
+- El script CMD portable solicita opcionalmente el ID real y ejecuta registro + diagnóstico. Pruebas Windows bajo Wine confirmaron persistencia de ID personalizado tras volver a registrar el ID estándar.
+- Falta confirmación en una instancia real del navegador del usuario y enlace real de MediaFire.

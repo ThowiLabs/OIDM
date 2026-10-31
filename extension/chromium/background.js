@@ -51,6 +51,15 @@ function showStatus(ok, message) {
   }, () => { void chrome.runtime.lastError; });
 }
 
+function nativeErrorDetail(error) {
+  const detail = String(error || "Host sin respuesta");
+  if (/native messaging host|native host|no host specified|host.*not found/i.test(detail)) {
+    return "Chrome/Edge no encuentra el host de OIDM. Abre OIDM > Ayuda > Reparar integración Chrome / Edge, " +
+      "pega el ID actual de chrome://extensions y recarga la extensión. Detalle: " + detail;
+  }
+  return detail;
+}
+
 function sendNative(payload) {
   return new Promise(resolve => {
     try {
@@ -59,7 +68,7 @@ function sendNative(payload) {
         requestId: `${Date.now()}-${Math.random().toString(36).slice(2)}`
       }, response => {
         const error = chrome.runtime.lastError?.message;
-        resolve(error ? { ok: false, error } : response || { ok: false, error: "Host sin respuesta" });
+        resolve(error ? { ok: false, error: nativeErrorDetail(error) } : response || { ok: false, error: "Host sin respuesta" });
       });
     } catch (error) {
       resolve({ ok: false, error: String(error) });

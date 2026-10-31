@@ -8,6 +8,7 @@ only the libraries they reference plus explicitly required Qt runtime plugins.
 
 import argparse
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -48,14 +49,38 @@ def main() -> None:
     extension_id = (repo / "extension" / "chromium" / "extension-id.txt").read_text(encoding="ascii").strip()
     (root / "CONFIGURAR-INTEGRACION.cmd").write_text(
         "@echo off\r\n"
+        "setlocal EnableExtensions\r\n"
         "cd /d \"%~dp0\"\r\n"
-        "echo Registrando la extension OIDM para Chrome y Edge...\r\n"
-        f"oidm-native-host.exe --register-chromium {extension_id}\r\n"
-        "if errorlevel 1 (\r\n"
-        "  echo ERROR: no se pudo registrar la integracion con navegador.\r\n"
-        ") else (\r\n"
-        "  echo Integracion registrada. Recarga la extension en Chrome o Edge.\r\n"
-        ")\r\n"
+        "echo.\r\n"
+        "echo === REPARAR EXTENSION OIDM: CHROME Y EDGE ===\r\n"
+        "echo.\r\n"
+        "echo Abre chrome://extensions o edge://extensions, activa Modo de desarrollador\r\n"
+        "echo y busca el ID de 32 letras de la extension OIDM instalada.\r\n"
+        f"echo ID recomendado de la extension nueva: {extension_id}\r\n"
+        "echo.\r\n"
+        "set \"EXTENSION_ID=\"\r\n"
+        "set /p \"EXTENSION_ID=Pega el ID que aparece en Chrome/Edge (Enter usa el recomendado): \"\r\n"
+        f"if not defined EXTENSION_ID set \"EXTENSION_ID={extension_id}\"\r\n"
+        "echo.\r\n"
+        "echo Registrando host nativo...\r\n"
+        "oidm-native-host.exe --register-chromium %EXTENSION_ID%\r\n"
+        "if errorlevel 1 goto error\r\n"
+        "echo.\r\n"
+        "echo Verificando registro, manifiesto, ejecutable e ID permitido...\r\n"
+        "oidm-native-host.exe --diagnose-chromium %EXTENSION_ID%\r\n"
+        "if errorlevel 1 goto error\r\n"
+        "echo.\r\n"
+        "echo LISTO: Registro de OIDM validado para Chrome y Edge.\r\n"
+        "echo Recarga la extension en chrome://extensions o edge://extensions.\r\n"
+        "echo Haz clic en su icono para comprobar la conexion con el programa.\r\n"
+        "goto end\r\n"
+        ":error\r\n"
+        "echo.\r\n"
+        "echo ERROR: No se pudo completar la integracion.\r\n"
+        "echo Ejecuta este archivo con el mismo usuario de Windows con el que abres Chrome.\r\n"
+        "echo NO usar Ejecutar como administrador.\r\n"
+        ":end\r\n"
+        "echo.\r\n"
         "pause\r\n",
         encoding="ascii",
     )
@@ -135,7 +160,9 @@ def main() -> None:
             shutil.copy2(source, dest)
             queue.append(dest)
 
-    zip_path = output / "OIDM-Windows-x64-portable.zip"
+    extension_manifest = json.loads((repo / "extension" / "chromium" / "manifest.json").read_text(encoding="utf-8"))
+    version = extension_manifest["version"]
+    zip_path = output / f"OIDM-Windows-x64-v{version}-portable.zip"
     if zip_path.exists():
         zip_path.unlink()
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED, compresslevel=7) as archive:

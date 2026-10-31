@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(OIDM
-    VERSION 0.1.0
+    VERSION 0.1.2
     DESCRIPTION "Open Internet Download Manager"
     HOMEPAGE_URL "https://github.com/ThowiLabs/OIDM"
     LANGUAGES CXX
