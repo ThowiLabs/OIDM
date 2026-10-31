@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QVector>
 #include <QtGlobal>
 
 namespace oidm {
@@ -28,6 +29,7 @@ struct Download {
     double speedBytesPerSecond{0.0};
     QString contentType;
     QString error;
+    QVector<int> connectionPercents; // ephemeral actual per-segment progress (not persisted)
     QDateTime createdAt;
     QDateTime updatedAt;
 

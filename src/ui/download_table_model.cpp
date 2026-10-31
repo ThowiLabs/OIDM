@@ -45,7 +45,7 @@ QVariant DownloadTableModel::data(const QModelIndex &index, int role) const
         }
     }
     if (role == Qt::ForegroundRole && download.status == DownloadStatus::Failed) {
-        return QColor(QStringLiteral("#b42318"));
+        return QColor(QStringLiteral("#ff8383"));
     }
     return {};
 }

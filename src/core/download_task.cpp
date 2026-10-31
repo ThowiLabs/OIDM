@@ -1064,6 +1064,19 @@ void DownloadTask::updateProgress(const bool force)
         downloaded = m_resumeOffset + m_singleResponseBytes;
     }
     m_download.downloadedBytes = downloaded;
+    m_download.connectionPercents.clear();
+    if (m_segmented) {
+        for (const Segment &segment : m_segments) {
+            const qint64 length = segment.end - segment.start + 1;
+            const int percent = length > 0 ? qBound(0, static_cast<int>(100.0 *
+                static_cast<double>(segment.downloaded) / static_cast<double>(length)), 100) : 0;
+            m_download.connectionPercents.push_back(percent);
+        }
+    } else if (!m_singleReply.isNull()) {
+        m_download.connectionPercents.push_back(
+            m_totalBytes > 0 ? qBound(0, qRound(100.0 * static_cast<double>(downloaded) /
+                static_cast<double>(m_totalBytes)), 100) : 0);
+    }
     m_download.totalBytes = m_totalBytes;
     m_download.contentType = m_contentType;
 

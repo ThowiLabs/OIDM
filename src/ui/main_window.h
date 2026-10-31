@@ -4,15 +4,19 @@
 #include "ui/download_table_model.h"
 
 #include <QMainWindow>
+#include <QPointer>
+#include <QHash>
 
 class QCloseEvent;
 class QTableView;
-class QListWidget;
+class QTreeWidget;
+class QSortFilterProxyModel;
 class QAction;
 
 namespace oidm {
 
 class DownloadRepository;
+class DownloadProgressDialog;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -27,6 +31,7 @@ protected:
 private slots:
     void addDownload();
     void repairBrowserIntegration();
+    void showSelectedDetails();
     void startSelected();
     void startQueue();
     void pauseSelected();
@@ -36,6 +41,8 @@ private slots:
 
 private:
     [[nodiscard]] QString selectedDownloadId() const;
+    void selectAndRevealDownload(const QString &id);
+    void showDetails(const Download &download);
     void createActions();
     void createMenusAndToolbar();
     void createCentralLayout();
@@ -44,8 +51,10 @@ private:
     DownloadRepository *m_repository = nullptr;
     DownloadManager *m_manager = nullptr;
     DownloadTableModel *m_model = nullptr;
+    QSortFilterProxyModel *m_categoryModel = nullptr;
+    QHash<QString, QPointer<DownloadProgressDialog>> m_details;
     QTableView *m_table = nullptr;
-    QListWidget *m_categories = nullptr;
+    QTreeWidget *m_categories = nullptr;
     QAction *m_addAction = nullptr;
     QAction *m_startAction = nullptr;
     QAction *m_startQueueAction = nullptr;

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(OIDM
-    VERSION 0.1.2
+    VERSION 0.2.0
     DESCRIPTION "Open Internet Download Manager"
     HOMEPAGE_URL "https://github.com/ThowiLabs/OIDM"
     LANGUAGES CXX
@@ -41,6 +41,8 @@ add_executable(oidm WIN32 MACOSX_BUNDLE
     src/ui/progress_delegate.cpp
     src/ui/add_download_dialog.h
     src/ui/add_download_dialog.cpp
+    src/ui/download_progress_dialog.h
+    src/ui/download_progress_dialog.cpp
     src/ui/main_window.h
     src/ui/main_window.cpp
 )
@@ -85,6 +87,8 @@ install(TARGETS oidm
 
 if(BUILD_TESTING)
     add_test(NAME oidm_smoke COMMAND oidm --self-test)
+    add_test(NAME oidm_ui_smoke COMMAND oidm --ui-self-test)
+    set_tests_properties(oidm_ui_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     set_tests_properties(oidm_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test)

@@ -9,6 +9,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QTableView>
+#include <QTreeWidget>
+#include <QMessageBox>
+#include "ui/download_progress_dialog.h"
 #include <QProcess>
 #include <QFileInfo>
 #include "integration/browser_extension_id.h"
@@ -18,6 +22,30 @@
 
 namespace {
 using namespace oidm;
+
+int runUiSelfTest()
+{
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) return 20;
+    DownloadRepository repository(temporary.filePath(QStringLiteral("ui.sqlite3")));
+    if (!repository.isOpen()) return 21;
+    MainWindow window(&repository);
+    QString id;
+    QString error;
+    const bool accepted = window.enqueueFromBrowser(
+        QStringLiteral("http://127.0.0.1:9/oidm-smoke-test.bin"),
+        QStringLiteral("oidm-smoke-test.bin"), QString(), &id, &error);
+    if (!accepted || id.isEmpty()) return 22;
+    auto *table = window.findChild<QTableView *>(QStringLiteral("downloadsTable"));
+    auto *categories = window.findChild<QTreeWidget *>(QStringLiteral("categories"));
+    if (!table || !categories || !table->model() || table->model()->rowCount() != 1) return 23;
+    if (!table->currentIndex().isValid() || table->currentIndex().data(Qt::UserRole).toString() != id) return 24;
+    if (categories->currentItem() != categories->topLevelItem(0)) return 25;
+    if (window.findChildren<DownloadProgressDialog *>().size() != 1) return 26;
+    const auto records = repository.all();
+    if (records.size() != 1 || records.constFirst().id != id) return 27;
+    return 0;
+}
 
 int runSelfTest()
 {
@@ -65,6 +93,9 @@ int main(int argc, char *argv[])
 
     if (application.arguments().contains(QStringLiteral("--self-test"))) {
         return runSelfTest();
+    }
+    if (application.arguments().contains(QStringLiteral("--ui-self-test"))) {
+        return runUiSelfTest();
     }
 
     const QString dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
@@ -118,9 +149,31 @@ int main(int argc, char *argv[])
             socket->flush();
             socket->disconnectFromServer();
         });
+    QObject::connect(&bridge, &oidm::NativeBridge::activationRequested, &window, [&window] {
+        if (window.isMinimized()) window.showNormal();
+        if (!window.isVisible()) window.show();
+        window.raise();
+        window.activateWindow();
+    });
     QString bridgeError;
     if (!bridge.start(&bridgeError)) {
-        qWarning("OIDM Native Messaging bridge unavailable: %s", qPrintable(bridgeError));
+        QLocalSocket first;
+        first.connectToServer(oidm::nativeBridgeName());
+        if (first.waitForConnected(350)) {
+            const QJsonObject request{{QStringLiteral("type"), QStringLiteral("activate")},
+                                      {QStringLiteral("requestId"), QStringLiteral("second-instance")}};
+            first.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+            first.waitForBytesWritten(500);
+            first.waitForReadyRead(650);
+            QMessageBox::information(nullptr, QObject::tr("OIDM ya está abierto"),
+                QObject::tr("Ya existe otra instancia de OIDM en ejecución. Se intentó mostrar la primera ventana.\n\n"
+                    "Para evitar que las descargas se envíen a una instancia antigua, "
+                    "cierra todas las ventanas de OIDM y vuelve a abrir esta versión."));
+            return 0;
+        }
+        QMessageBox::critical(nullptr, QObject::tr("Integración no disponible"),
+            QObject::tr("No se pudo iniciar el receptor del navegador: %1").arg(bridgeError));
+        return 4;
     }
     window.show();
     return application.exec();

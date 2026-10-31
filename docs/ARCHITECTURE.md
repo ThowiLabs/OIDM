@@ -66,3 +66,9 @@ SQLite conserva la entidad y el estado visible. El manifiesto de segmentos conse
 5. El host devuelve el ID de la tarea como confirmación.
 
 La integración end-to-end se comprobó en Linux desde un cliente de prueba hasta el archivo y la fila de SQLite. La instalación en Chrome/Edge real y la ejecución Windows siguen pendientes de validación.
+
+## GUI classic dark preview (0.2.0)
+
+The Qt Widgets view contains a source-of-truth `DownloadTableModel` and a `QSortFilterProxyModel` for file-type/status categories. Browser enqueue persists synchronously into `DownloadRepository`, updates the source model, resets the category selection to All, maps source→proxy selection, and creates an optional modeless `DownloadProgressDialog`. Subsequent core progress updates (including per-segment percentages calculated from actual transfer byte counts) update both views. The UI holds `QPointer`s to modeless dialogs; no cleanup signals can access members during the parent destructor.
+
+An existing `QLocalServer` listener owns each per-user bridge name. A second GUI instance requests activation through an IPC `activate` message then exits, preventing simultaneous misleading empty windows. The original IDM's proprietary images/code are not used.

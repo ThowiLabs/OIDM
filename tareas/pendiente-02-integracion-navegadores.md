@@ -43,3 +43,9 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Registrador Chrome/Edge ahora conserva IDs personalizados previamente registrados (si la ruta de host no cambia) y valida ambas claves, sin exigir admin.
 - El script CMD portable solicita opcionalmente el ID real y ejecuta registro + diagnóstico. Pruebas Windows bajo Wine confirmaron persistencia de ID personalizado tras volver a registrar el ID estándar.
 - Falta confirmación en una instancia real del navegador del usuario y enlace real de MediaFire.
+
+## Captura visible y aplicación única (31-oct-2026)
+
+- Descarga aceptada por el host nativo: guardada en SQLite, visible inmediatamente bajo Todas las descargas, seleccionada, con detalle de transferencia abierto; la aplicación se trae al frente cuando lo permite el SO.
+- Estado de error de transferencia conservado en la tabla. Verificación automática `oidm --ui-self-test` valida persistencia, selección y diálogo.
+- Si hay dos instancias, la segunda no permanece abierta con lista vacía: intenta activar la instancia dueña del socket y muestra advertencia de versiones anteriores.

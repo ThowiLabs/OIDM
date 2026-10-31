@@ -20,6 +20,7 @@ public:
     [[nodiscard]] bool start(QString *error = nullptr);
 
 signals:
+    void activationRequested();
     void enqueueRequested(const QString &url, const QString &suggestedName,
                           const QString &referrer, const QString &requestId, QObject *replyTarget);
 

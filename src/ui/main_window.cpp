@@ -3,6 +3,7 @@
 #include "core/download_repository.h"
 #include "ui/add_download_dialog.h"
 #include "ui/progress_delegate.h"
+#include "ui/download_progress_dialog.h"
 #include "integration/browser_extension_id.h"
 
 #include <QAction>
@@ -20,7 +21,14 @@
 #include <QHeaderView>
 #include <QKeySequence>
 #include <QLabel>
-#include <QListWidget>
+#include <QTreeWidget>
+#include <QSortFilterProxyModel>
+#include <QItemSelectionModel>
+#include <QTimer>
+#include <QIcon>
+#include <QApplication>
+#include <QSplitter>
+#include <QFileIconProvider>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -32,6 +40,40 @@
 #include <QWidget>
 
 namespace oidm {
+namespace {
+
+enum Category { All = 0, Incomplete = 1, Finished = 2, Programs = 3, Compressed = 4,
+                Documents = 5, Music = 6, Videos = 7 };
+
+class CategoryFilter final : public QSortFilterProxyModel {
+public:
+    explicit CategoryFilter(QObject *parent) : QSortFilterProxyModel(parent) {}
+    void setCategory(int category) { m_category = category; invalidateFilter(); }
+
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override {
+        const auto *model = qobject_cast<const DownloadTableModel *>(sourceModel());
+        const Download *download = model == nullptr || parent.isValid() ? nullptr : model->at(row);
+        if (!download) return false;
+        switch (m_category) {
+        case All: return true;
+        case Incomplete: return download->status != DownloadStatus::Completed;
+        case Finished: return download->status == DownloadStatus::Completed;
+        default: break;
+        }
+        const QString suffix = QFileInfo(download->fileName).suffix().toLower();
+        if (m_category == Programs) return QStringList{QStringLiteral("exe"),QStringLiteral("msi"),QStringLiteral("deb"),QStringLiteral("rpm"),QStringLiteral("apk"),QStringLiteral("appimage")}.contains(suffix);
+        if (m_category == Compressed) return QStringList{QStringLiteral("zip"),QStringLiteral("rar"),QStringLiteral("7z"),QStringLiteral("tar"),QStringLiteral("gz"),QStringLiteral("bz2")}.contains(suffix);
+        if (m_category == Documents) return QStringList{QStringLiteral("pdf"),QStringLiteral("docx"),QStringLiteral("doc"),QStringLiteral("xlsx"),QStringLiteral("txt"),QStringLiteral("pptx")}.contains(suffix);
+        if (m_category == Music) return QStringList{QStringLiteral("mp3"),QStringLiteral("flac"),QStringLiteral("wav"),QStringLiteral("ogg"),QStringLiteral("m4a")}.contains(suffix);
+        if (m_category == Videos) return QStringList{QStringLiteral("mp4"),QStringLiteral("mkv"),QStringLiteral("avi"),QStringLiteral("webm"),QStringLiteral("mov")}.contains(suffix);
+        return true;
+    }
+private:
+    int m_category{All};
+};
+
+} // namespace
 
 MainWindow::MainWindow(DownloadRepository *repository, QWidget *parent)
     : QMainWindow(parent),
@@ -40,7 +82,8 @@ MainWindow::MainWindow(DownloadRepository *repository, QWidget *parent)
       m_model(new DownloadTableModel(this))
 {
     setWindowTitle(tr("OIDM — Open Internet Download Manager"));
-    resize(1180, 740);
+    resize(1220, 760);
+    setMinimumSize(840, 540);
     createActions();
     createMenusAndToolbar();
     createCentralLayout();
@@ -53,6 +96,9 @@ MainWindow::MainWindow(DownloadRepository *repository, QWidget *parent)
             this, &MainWindow::onDownloadUpdated);
     connect(m_manager, &DownloadManager::downloadFinished, this, [this](const Download &download) {
         statusBar()->showMessage(tr("%1: %2").arg(download.fileName, statusText(download.status)), 6000);
+        if (download.status == DownloadStatus::Failed && m_details.value(download.id)) {
+            m_details.value(download.id)->raise();
+        }
     });
     statusBar()->showMessage(tr("Listo"));
 }
@@ -90,97 +136,249 @@ void MainWindow::createMenusAndToolbar()
     fileMenu->addAction(tr("Salir"), QKeySequence::Quit, this, &QWidget::close);
 
     QMenu *downloadsMenu = menuBar()->addMenu(tr("Descargas"));
-    downloadsMenu->addAction(m_addAction);
-    downloadsMenu->addAction(m_startAction);
-    downloadsMenu->addAction(m_startQueueAction);
-    downloadsMenu->addAction(m_pauseAction);
-    downloadsMenu->addAction(m_cancelAction);
+    downloadsMenu->addActions({m_addAction, m_startAction, m_startQueueAction, m_pauseAction, m_cancelAction});
     downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_removeAction);
-
-    menuBar()->addMenu(tr("Ver"));
-    menuBar()->addMenu(tr("Colas"));
+    downloadsMenu->addAction(tr("Mostrar detalles"), this, &MainWindow::showSelectedDetails);
+    QMenu *viewMenu = menuBar()->addMenu(tr("Ver"));
+    viewMenu->addAction(tr("Todas las descargas"), this, [this] {
+        m_categories->setCurrentItem(m_categories->topLevelItem(0));
+    });
+    QMenu *toolsMenu = menuBar()->addMenu(tr("Herramientas"));
+    toolsMenu->addAction(tr("Iniciar cola"), m_manager, &DownloadManager::startQueued);
     QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
     helpMenu->addAction(tr("Reparar integración Chrome / Edge..."), this,
                         &MainWindow::repairBrowserIntegration);
+    helpMenu->addAction(tr("Acerca de OIDM"), this, [this] {
+        QMessageBox::about(this, tr("OIDM"), tr("Open Internet Download Manager\n"
+            "Versión %1 · ThowiLabs\nC++20 · Qt 6 · Código abierto\n"
+            "Interfaz clásica oscura (implementación original).")
+            .arg(QCoreApplication::applicationVersion()));
+    });
 
-    auto *toolbar = addToolBar(tr("Principal"));
+    auto *toolbar = addToolBar(tr("Acciones principales"));
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
     toolbar->setMovable(false);
-    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    toolbar->setIconSize(QSize(32, 32));
+    m_addAction->setText(tr("Agregar URL"));
+    m_startAction->setText(tr("Reanudar"));
+    m_startQueueAction->setText(tr("Iniciar todo"));
+    m_pauseAction->setText(tr("Pausar"));
+    m_cancelAction->setText(tr("Detener"));
+    m_removeAction->setText(tr("Eliminar"));
     toolbar->addAction(m_addAction);
-    toolbar->addSeparator();
     toolbar->addAction(m_startAction);
     toolbar->addAction(m_startQueueAction);
     toolbar->addAction(m_pauseAction);
     toolbar->addAction(m_cancelAction);
-    toolbar->addSeparator();
     toolbar->addAction(m_removeAction);
+    toolbar->addSeparator();
+    auto *details = toolbar->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("Detalles"),
+                                      this, &MainWindow::showSelectedDetails);
+    details->setObjectName(QStringLiteral("detailsAction"));
+    toolbar->addSeparator();
+    toolbar->addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("Opciones"), this, [this] {
+        QMessageBox::information(this, tr("Opciones"), tr("La configuración avanzada estará disponible próximamente."));
+    });
 }
 
 void MainWindow::createCentralLayout()
 {
     auto *central = new QWidget(this);
-    auto *layout = new QHBoxLayout(central);
-    layout->setContentsMargins(10, 10, 10, 10);
-    layout->setSpacing(12);
+    central->setObjectName(QStringLiteral("mainContent"));
+    auto *layout = new QVBoxLayout(central);
+    layout->setContentsMargins(8, 8, 8, 4);
+    layout->setSpacing(7);
 
-    m_categories = new QListWidget(central);
+    auto *split = new QSplitter(Qt::Horizontal, central);
+    split->setObjectName(QStringLiteral("downloadsSplitter"));
+    split->setChildrenCollapsible(false);
+
+    m_categories = new QTreeWidget(split);
     m_categories->setObjectName(QStringLiteral("categories"));
-    m_categories->setFixedWidth(190);
-    m_categories->addItems({
-        tr("Todas las descargas"), tr("Sin terminar"), tr("Terminadas"),
-        tr("Programas"), tr("Comprimidos"), tr("Documentos"), tr("Música"), tr("Vídeos")
-    });
-    m_categories->setCurrentRow(0);
-    layout->addWidget(m_categories);
+    m_categories->setHeaderLabel(tr("Categorías"));
+    m_categories->setRootIsDecorated(true);
+    m_categories->setMinimumWidth(165);
+    m_categories->setMaximumWidth(320);
 
-    auto *content = new QVBoxLayout();
-    auto *heading = new QLabel(tr("Descargas"), central);
+    auto *all = new QTreeWidgetItem(m_categories, {tr("Todas las descargas")});
+    all->setData(0, Qt::UserRole, All);
+    all->setIcon(0, style()->standardIcon(QStyle::SP_DirHomeIcon));
+    const auto addSub = [this, all](const QString &label, int category, QStyle::StandardPixmap icon) {
+        auto *child = new QTreeWidgetItem(all, {label});
+        child->setData(0, Qt::UserRole, category);
+        child->setIcon(0, style()->standardIcon(icon));
+    };
+    addSub(tr("Programas"), Programs, QStyle::SP_ComputerIcon);
+    addSub(tr("Comprimidos"), Compressed, QStyle::SP_DriveHDIcon);
+    addSub(tr("Documentos"), Documents, QStyle::SP_FileIcon);
+    addSub(tr("Música"), Music, QStyle::SP_MediaVolume);
+    addSub(tr("Vídeo"), Videos, QStyle::SP_MediaPlay);
+
+    auto *unfinished = new QTreeWidgetItem(m_categories, {tr("Sin terminar")});
+    unfinished->setData(0, Qt::UserRole, Incomplete);
+    unfinished->setIcon(0, style()->standardIcon(QStyle::SP_BrowserReload));
+    auto *finished = new QTreeWidgetItem(m_categories, {tr("Terminadas")});
+    finished->setData(0, Qt::UserRole, Finished);
+    finished->setIcon(0, style()->standardIcon(QStyle::SP_DialogApplyButton));
+    m_categories->expandAll();
+    m_categories->setCurrentItem(all);
+
+    auto *panel = new QWidget(split);
+    auto *content = new QVBoxLayout(panel);
+    content->setContentsMargins(3, 0, 0, 0);
+    content->setSpacing(8);
+    auto *heading = new QLabel(tr("TODAS LAS DESCARGAS"), panel);
     heading->setObjectName(QStringLiteral("sectionHeading"));
     content->addWidget(heading);
 
-    m_table = new QTableView(central);
+    m_categoryModel = new CategoryFilter(this);
+    m_categoryModel->setSourceModel(m_model);
+    m_categoryModel->setDynamicSortFilter(true);
+    m_table = new QTableView(panel);
     m_table->setObjectName(QStringLiteral("downloadsTable"));
-    m_table->setModel(m_model);
+    m_table->setModel(m_categoryModel);
     m_table->setItemDelegateForColumn(DownloadTableModel::Progress, new ProgressDelegate(m_table));
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setAlternatingRowColors(true);
     m_table->setShowGrid(false);
+    m_table->setSortingEnabled(false);
+    m_table->setWordWrap(false);
+    m_table->setIconSize(QSize(18,18));
     m_table->verticalHeader()->hide();
-    m_table->horizontalHeader()->setStretchLastSection(true);
+    m_table->verticalHeader()->setDefaultSectionSize(36);
+    m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Name, QHeaderView::Stretch);
-    for (int column = DownloadTableModel::Size; column < DownloadTableModel::ColumnCount; ++column) {
-        m_table->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
-    }
-    connect(m_table, &QTableView::doubleClicked, this, &MainWindow::startSelected);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Size, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Status, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Progress, QHeaderView::Fixed);
+    m_table->setColumnWidth(DownloadTableModel::Progress, 145);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Speed, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Date, QHeaderView::ResizeToContents);
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QTableView::customContextMenuRequested, this, [this](const QPoint &pos) {
+        QMenu menu(this);
+        menu.addAction(m_startAction);
+        menu.addAction(m_pauseAction);
+        menu.addAction(m_cancelAction);
+        menu.addSeparator();
+        menu.addAction(tr("Ver progreso / detalles"), this, &MainWindow::showSelectedDetails);
+        menu.exec(m_table->viewport()->mapToGlobal(pos));
+    });
+    connect(m_table, &QTableView::doubleClicked, this, &MainWindow::showSelectedDetails);
     content->addWidget(m_table, 1);
-
-    auto *footer = new QLabel(tr("Motor de descargas C++ / Qt 6 · Aceleración por segmentos en desarrollo"), central);
+    connect(m_categories, &QTreeWidget::currentItemChanged, this,
+        [this, heading](QTreeWidgetItem *item) {
+            if (!item) return;
+            static_cast<CategoryFilter *>(m_categoryModel)->setCategory(item->data(0, Qt::UserRole).toInt());
+            heading->setText(item->text(0).toUpper());
+        });
+    split->addWidget(m_categories);
+    split->addWidget(panel);
+    split->setSizes({210, 980});
+    layout->addWidget(split, 1);
+    auto *footer = new QLabel(tr("●  MOTOR LISTO     ·     C++20 / Qt 6     ·     Descargas HTTP/HTTPS y conexiones segmentadas"), central);
     footer->setObjectName(QStringLiteral("footerNote"));
-    content->addWidget(footer);
-    layout->addLayout(content, 1);
+    layout->addWidget(footer);
     setCentralWidget(central);
 }
 
 void MainWindow::applyStyle()
 {
     setStyleSheet(QStringLiteral(
-        "QMainWindow { background: #f3f5f8; }"
-        "QMenuBar { background: #ffffff; border-bottom: 1px solid #dce1e8; padding: 4px; }"
-        "QToolBar { background: #ffffff; border: none; border-bottom: 1px solid #dce1e8; spacing: 8px; padding: 8px; }"
-        "QToolButton { padding: 7px 10px; border-radius: 5px; }"
-        "QToolButton:hover { background: #e9eef6; }"
-        "QListWidget#categories { background: #ffffff; border: 1px solid #e0e5ec; border-radius: 7px; padding: 6px; }"
-        "QListWidget#categories::item { padding: 10px 8px; border-radius: 4px; }"
-        "QListWidget#categories::item:selected { background: #dce9fa; color: #174a86; }"
-        "QLabel#sectionHeading { color: #1e293b; font-size: 20px; font-weight: 600; padding: 2px 0 8px 0; }"
-        "QTableView#downloadsTable { background: #ffffff; alternate-background-color: #f8fafc; border: 1px solid #e0e5ec; border-radius: 7px; selection-background-color: #dce9fa; selection-color: #172b4d; }"
-        "QHeaderView::section { background: #f5f7fa; color: #526174; border: none; border-bottom: 1px solid #dce1e8; padding: 9px 8px; font-weight: 600; }"
-        "QLabel#footerNote { color: #7b8796; padding: 4px; }"
-        "QStatusBar { background: #ffffff; border-top: 1px solid #dce1e8; color: #637083; }"
+        "QMainWindow, QDialog { background: #171b22; color: #e2e8f0; }"
+        "QWidget#mainContent { background: #171b22; }"
+        "QMenuBar { background: #202630; color: #dce4ed; border-bottom: 1px solid #353e4c; padding: 4px 8px; }"
+        "QMenuBar::item { padding: 6px 12px; }"
+        "QMenuBar::item:selected, QMenu::item:selected { background: #30435b; }"
+        "QMenu { background: #242b36; color: #e2e8f0; border: 1px solid #404b5c; }"
+        "QMenu::item { padding: 7px 26px; }"
+        "QToolBar#mainToolbar { background: #242b36; color: #f1f5f9; border: none; border-bottom: 1px solid #405064; spacing: 6px; padding: 8px 12px; }"
+        "QToolBar::separator { background: #405064; width: 1px; margin: 8px 8px; }"
+        "QToolButton { color: #e2e8f0; background: transparent; padding: 7px 8px; border: 1px solid transparent; border-radius: 5px; min-width: 65px; }"
+        "QToolButton:hover { background: #344359; border: 1px solid #526880; }"
+        "QToolButton:pressed { background: #274462; }"
+        "QTreeWidget#categories { color: #cdd8e7; background: #1e242e; border: 1px solid #343e4d; border-radius: 4px; outline: 0; }"
+        "QTreeWidget#categories::item { padding: 7px 5px; min-height: 22px; border-radius: 3px; }"
+        "QTreeWidget#categories::item:selected { background: #265880; color: #ffffff; }"
+        "QTreeWidget#categories::item:hover { background: #303d4c; }"
+        "QHeaderView::section { color: #bdc9d8; background: #27303d; border: none; border-right: 1px solid #343e4d; border-bottom: 1px solid #455366; padding: 9px 9px; font-weight: 600; }"
+        "QTableView#downloadsTable { color: #e2e8f0; background: #1c222c; alternate-background-color: #222a36; gridline-color: #35404d; border: 1px solid #343e4d; selection-background-color: #285b84; selection-color: #ffffff; outline: 0; }"
+        "QTableView#downloadsTable::item { padding: 5px 7px; }"
+        "QTableView#downloadsTable::item:hover { background: #2c3d51; }"
+        "QLabel#sectionHeading { color: #a9c4e5; font-size: 13px; font-weight: 700; padding: 10px 5px 4px; }"
+        "QLabel#footerNote { color: #8b99ab; background: #202630; padding: 9px 10px; border: 1px solid #333e4e; }"
+        "QStatusBar { color: #b4c5d6; background: #202630; border-top: 1px solid #3d4b5c; padding: 4px; }"
+        "QSplitter::handle { background: #303a48; width: 5px; }"
+        "QScrollBar { background: #202630; }"
+        "QScrollBar::handle { background: #4a596c; border-radius: 4px; min-height: 22px; min-width: 12px; }"
+        "QPushButton { background: #2b3a4b; color: #edf2f9; border: 1px solid #495d72; border-radius: 5px; padding: 8px 13px; }"
+        "QPushButton:hover { background: #365c7b; }"
+        "QLineEdit, QTabWidget::pane, QTableWidget { color: #e2e8f0; background: #202733; border: 1px solid #415062; }"
+        "QProgressBar { color: white; background: #1b2834; border: 1px solid #496079; border-radius: 4px; text-align: center; }"
+        "QProgressBar::chunk { background: #16a085; border-radius: 3px; }"
     ));
+}
+
+void MainWindow::selectAndRevealDownload(const QString &id)
+{
+    m_categories->setCurrentItem(m_categories->topLevelItem(0));
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const Download *download = m_model->at(row);
+        if (!download || download->id != id) continue;
+        const QModelIndex visible = m_categoryModel->mapFromSource(m_model->index(row, 0));
+        if (visible.isValid()) {
+            m_table->selectRow(visible.row());
+            m_table->scrollTo(visible, QAbstractItemView::PositionAtCenter);
+        }
+        break;
+    }
+    if (isMinimized()) showNormal();
+    if (!isVisible()) show();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::showDetails(const Download &download)
+{
+    QPointer<DownloadProgressDialog> dialog = m_details.value(download.id);
+    if (!dialog) {
+        dialog = new DownloadProgressDialog(download, this);
+        m_details.insert(download.id, dialog);
+        connect(dialog, &DownloadProgressDialog::pauseRequested, this, [this](const QString &id) {
+            QString error;
+            if (!m_manager->pause(id, &error)) statusBar()->showMessage(error, 6000);
+        });
+        connect(dialog, &DownloadProgressDialog::resumeRequested, this, [this](const QString &id) {
+            QString error;
+            if (!m_manager->start(id, &error)) statusBar()->showMessage(error, 6000);
+        });
+        connect(dialog, &DownloadProgressDialog::cancelRequested, this, [this](const QString &id) {
+            QString error;
+            if (!m_manager->cancel(id, &error)) statusBar()->showMessage(error, 6000);
+        });
+        // QPointer automatically becomes null when the modeless dialog closes.
+        // Do not mutate m_details from QObject::destroyed: Qt destroys child
+        // dialogs after MainWindow's own members have been destroyed.
+    } else {
+        dialog->updateDownload(download);
+    }
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void MainWindow::showSelectedDetails()
+{
+    const QString id = selectedDownloadId();
+    for (int i = 0; i < m_model->rowCount(); ++i) {
+        if (const Download *item = m_model->at(i); item && item->id == id) {
+            showDetails(*item);
+            return;
+        }
+    }
 }
 
 QString MainWindow::selectedDownloadId() const
@@ -255,10 +453,14 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
     download.updatedAt = download.createdAt;
     if (!m_repository || !m_repository->insert(download, error)) return false;
     m_model->upsert(download);
+    selectAndRevealDownload(download.id);
+    showDetails(download);
     if (id) *id = download.id;
     QString ignored;
     if (!m_manager->start(download.id, &ignored)) {
-        statusBar()->showMessage(tr("Descarga en cola: %1").arg(ignored), 4000);
+        statusBar()->showMessage(tr("Descarga guardada, pendiente de inicio: %1").arg(ignored), 8000);
+    } else {
+        statusBar()->showMessage(tr("Descarga recibida desde el navegador: %1").arg(download.fileName), 7000);
     }
     return true;
 }
@@ -333,6 +535,7 @@ void MainWindow::addDownload()
         return;
     }
     m_model->upsert(download);
+    selectAndRevealDownload(download.id);
     statusBar()->showMessage(tr("Descarga agregada a la cola"), 4000);
 }
 
@@ -381,6 +584,9 @@ void MainWindow::removeSelected()
 void MainWindow::onDownloadUpdated(const Download &download)
 {
     m_model->upsert(download);
+    if (QPointer<DownloadProgressDialog> dialog = m_details.value(download.id)) {
+        dialog->updateDownload(download);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

@@ -90,6 +90,13 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
         socket->disconnectFromServer();
         return;
     }
+    if (data.value(QStringLiteral("type")).toString() == QStringLiteral("activate")) {
+        emit activationRequested();
+        socket->write(response(true, requestId, QStringLiteral("OIDM visible")));
+        socket->flush();
+        socket->disconnectFromServer();
+        return;
+    }
     if (data.value(QStringLiteral("type")).toString() == QStringLiteral("ping")) {
         socket->write(response(true, requestId, QStringLiteral("OIDM conectado")));
         socket->flush();

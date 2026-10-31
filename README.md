@@ -9,7 +9,7 @@ The desktop application is developed exclusively in **C++20 and Qt 6 Widgets**, 
 ## Current implementation status
 
 Implemented:
-- Native Qt Widgets desktop window, toolbar, categories, download table, progress delegate, and add-download dialog.
+- Native Qt Widgets **dark classic IDM-inspired** desktop window (original icons/assets, not an IDM copy), vertical category tree with working filters, action toolbar, dark download table, and dedicated download progress dialog with real per-segment percentages. Browser-accepted downloads are selected and brought to the foreground automatically.
 - SQLite-backed persistent download queue.
 - Nonblocking HTTP/HTTPS requests through Qt Network and a bounded 3-download queue.
 - Up to 8 simultaneous byte-range segments per eligible file, with independent temporary files and byte-accurate reconstruction.
@@ -31,6 +31,14 @@ Not implemented yet:
 - GUI-independent disk assembly for huge downloads; segmented assembly currently runs synchronously in the Qt event loop.
 
 OIDM now has an initial working parallel segmented engine, verified against local HTTP test fixtures. This is **not yet full IDM feature parity**, and the actual speed increase depends on server limits, latency and available bandwidth. Large-file assembly and disk I/O performance still need optimization and stress tests.
+
+## Download visibility and multiple instances
+
+When the browser Native Messaging host accepts a download, OIDM persists the item in SQLite, switches the category view to **Todas las descargas**, selects and scrolls to the new record, shows a native progress/details window and attempts to raise the main window. The host replies `ok=true` only after the record is persisted; transfer failures after acceptance remain visible in the list with **Error** status. A second instance of OIDM no longer silently shows an empty window while the first instance owns the browser IPC socket: it requests activation of the first instance and shows a warning to close old versions before testing.
+
+The `--ui-self-test` executable test checks that a browser-enqueued URL appears in the visible table, is selected, has a progress dialog and remains persisted in SQLite. On Linux, run all tests with `ctest` (including the UI smoke test). Native Windows cross-builds can run the same test under Wine/Xvfb, in addition to Native Messaging end-to-end checks.
+
+The classic toolbar, per-download details and progress dialog are implemented. Speed limiting, completion actions, scheduling and Firefox integration are **not** implemented; their tabs are labeled unavailable instead of pretending to work.
 
 ## Build on Linux
 
