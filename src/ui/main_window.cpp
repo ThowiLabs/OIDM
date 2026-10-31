@@ -3,6 +3,7 @@
 #include "core/download_repository.h"
 #include "ui/add_download_dialog.h"
 #include "ui/progress_delegate.h"
+#include "ui/classic_icons.h"
 #include "ui/download_progress_dialog.h"
 #include "ui/browser_setup_dialog.h"
 #include "ui/settings_dialog.h"
@@ -30,6 +31,8 @@
 #include <QTimer>
 #include <QIcon>
 #include <QApplication>
+#include <QClipboard>
+#include <QDesktopServices>
 #include <QSettings>
 #include <QSplitter>
 #include <QFileIconProvider>
@@ -47,7 +50,7 @@ namespace oidm {
 namespace {
 
 enum Category { All = 0, Incomplete = 1, Finished = 2, Programs = 3, Compressed = 4,
-                Documents = 5, Music = 6, Videos = 7 };
+                Documents = 5, Music = 6, Videos = 7, Pending = 8 };
 
 class CategoryFilter final : public QSortFilterProxyModel {
 public:
@@ -63,6 +66,8 @@ protected:
         case All: return true;
         case Incomplete: return download->status != DownloadStatus::Completed;
         case Finished: return download->status == DownloadStatus::Completed;
+        case Pending: return download->status == DownloadStatus::AwaitingConfirmation
+            || download->status == DownloadStatus::Queued;
         default: break;
         }
         const QString suffix = QFileInfo(download->fileName).suffix().toLower();
@@ -104,27 +109,36 @@ MainWindow::MainWindow(DownloadRepository *repository, QWidget *parent)
             m_details.value(download.id)->raise();
         }
     });
+    m_statisticsLabel = new QLabel(this);
+    m_statisticsLabel->setObjectName(QStringLiteral("downloadStatistics"));
+    statusBar()->addPermanentWidget(m_statisticsLabel);
+    const auto update = [this] { updateActionStates(); };
+    connect(m_model, &QAbstractItemModel::dataChanged, this, update);
+    connect(m_model, &QAbstractItemModel::rowsInserted, this, update);
+    connect(m_model, &QAbstractItemModel::rowsRemoved, this, update);
+    connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, update);
+    updateActionStates();
     statusBar()->showMessage(tr("Listo"));
 }
 
 void MainWindow::createActions()
 {
-    m_addAction = new QAction(style()->standardIcon(QStyle::SP_DialogOpenButton), tr("Agregar URL"), this);
+    m_addAction = new QAction(classicIcon(QStringLiteral("add"), QColor(QStringLiteral("#41d0a4"))), tr("Agregar URL"), this);
     m_addAction->setShortcut(QKeySequence::New);
     connect(m_addAction, &QAction::triggered, this, &MainWindow::addDownload);
 
-    m_startAction = new QAction(style()->standardIcon(QStyle::SP_MediaPlay), tr("Iniciar"), this);
+    m_startAction = new QAction(classicIcon(QStringLiteral("start"), QColor(QStringLiteral("#7ade88"))), tr("Iniciar"), this);
     m_startAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_startAction, &QAction::triggered, this, &MainWindow::startSelected);
 
-    m_startQueueAction = new QAction(style()->standardIcon(QStyle::SP_MediaSeekForward), tr("Iniciar cola"), this);
+    m_startQueueAction = new QAction(classicIcon(QStringLiteral("queue"), QColor(QStringLiteral("#7ac7ff"))), tr("Iniciar cola"), this);
     connect(m_startQueueAction, &QAction::triggered, this, &MainWindow::startQueue);
 
-    m_pauseAction = new QAction(style()->standardIcon(QStyle::SP_MediaPause), tr("Pausar"), this);
+    m_pauseAction = new QAction(classicIcon(QStringLiteral("pause"), QColor(QStringLiteral("#ffc76c"))), tr("Pausar"), this);
     m_pauseAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
     connect(m_pauseAction, &QAction::triggered, this, &MainWindow::pauseSelected);
 
-    m_cancelAction = new QAction(style()->standardIcon(QStyle::SP_DialogCancelButton), tr("Cancelar"), this);
+    m_cancelAction = new QAction(classicIcon(QStringLiteral("stop"), QColor(QStringLiteral("#ff7e83"))), tr("Cancelar"), this);
     connect(m_cancelAction, &QAction::triggered, this, &MainWindow::cancelSelected);
 
     m_captureAction = new QAction(tr("Pausar capturas"), this);
@@ -133,9 +147,23 @@ void MainWindow::createActions()
     m_captureAction->setChecked(QSettings().value(QStringLiteral("browser/capturePaused"), false).toBool());
     connect(m_captureAction, &QAction::triggered, this, &MainWindow::toggleBrowserCapture);
 
-    m_removeAction = new QAction(style()->standardIcon(QStyle::SP_TrashIcon), tr("Eliminar"), this);
+    m_removeAction = new QAction(classicIcon(QStringLiteral("remove"), QColor(QStringLiteral("#d5a2ee"))), tr("Eliminar"), this);
     m_removeAction->setShortcut(QKeySequence::Delete);
     connect(m_removeAction, &QAction::triggered, this, &MainWindow::removeSelected);
+    m_stopAllAction = new QAction(classicIcon(QStringLiteral("stop-all"), QColor(QStringLiteral("#ff9290"))), tr("Detener todo"), this);
+    connect(m_stopAllAction, &QAction::triggered, this, &MainWindow::stopAllDownloads);
+    m_stopQueueAction = new QAction(classicIcon(QStringLiteral("pause"), QColor(QStringLiteral("#ffaa64"))), tr("Detener cola"), this);
+    connect(m_stopQueueAction, &QAction::triggered, this, &MainWindow::stopQueue);
+    m_deleteCompletedAction = new QAction(classicIcon(QStringLiteral("clear"), QColor(QStringLiteral("#aebad2"))), tr("Limpiar terminadas"), this);
+    connect(m_deleteCompletedAction, &QAction::triggered, this, &MainWindow::removeCompleted);
+    m_openFileAction = new QAction(tr("Abrir archivo"), this);
+    connect(m_openFileAction, &QAction::triggered, this, &MainWindow::openSelectedFile);
+    m_openFolderAction = new QAction(classicIcon(QStringLiteral("folder"), QColor(QStringLiteral("#efc86d"))), tr("Abrir carpeta"), this);
+    connect(m_openFolderAction, &QAction::triggered, this, &MainWindow::openSelectedFolder);
+    m_copyUrlAction = new QAction(tr("Copiar URL"), this);
+    connect(m_copyUrlAction, &QAction::triggered, this, &MainWindow::copySelectedUrl);
+    m_propertiesAction = new QAction(tr("Propiedades"), this);
+    connect(m_propertiesAction, &QAction::triggered, this, &MainWindow::showSelectedProperties);
 }
 
 void MainWindow::createMenusAndToolbar()
@@ -148,7 +176,13 @@ void MainWindow::createMenusAndToolbar()
     QMenu *downloadsMenu = menuBar()->addMenu(tr("Descargas"));
     downloadsMenu->addActions({m_addAction, m_startAction, m_startQueueAction, m_pauseAction, m_cancelAction});
     downloadsMenu->addSeparator();
+    downloadsMenu->addAction(m_stopAllAction);
+    downloadsMenu->addAction(m_stopQueueAction);
+    downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_removeAction);
+    downloadsMenu->addAction(m_deleteCompletedAction);
+    downloadsMenu->addSeparator();
+    downloadsMenu->addActions({m_openFileAction, m_openFolderAction, m_copyUrlAction, m_propertiesAction});
     downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_captureAction);
     downloadsMenu->addAction(tr("Mostrar detalles"), this, &MainWindow::showSelectedDetails);
@@ -159,6 +193,7 @@ void MainWindow::createMenusAndToolbar()
     QMenu *toolsMenu = menuBar()->addMenu(tr("Herramientas"));
     toolsMenu->addAction(tr("Iniciar cola"), m_manager, &DownloadManager::startQueued);
     toolsMenu->addAction(m_captureAction);
+    toolsMenu->addAction(m_openFolderAction);
     QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
     helpMenu->addAction(tr("Instalar / conectar extensión Chrome y Edge..."), this,
                         &MainWindow::openBrowserSetup);
@@ -176,27 +211,32 @@ void MainWindow::createMenusAndToolbar()
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    toolbar->setIconSize(QSize(32, 32));
+    toolbar->setIconSize(QSize(36, 36));
     m_addAction->setText(tr("Agregar URL"));
     m_startAction->setText(tr("Reanudar"));
-    m_startQueueAction->setText(tr("Iniciar todo"));
+    m_startQueueAction->setText(tr("Iniciar cola"));
     m_pauseAction->setText(tr("Pausar"));
-    m_cancelAction->setText(tr("Detener"));
+    m_cancelAction->setText(tr("Cancelar"));
     m_removeAction->setText(tr("Eliminar"));
     toolbar->addAction(m_addAction);
     toolbar->addAction(m_startAction);
-    toolbar->addAction(m_startQueueAction);
     toolbar->addAction(m_pauseAction);
-    toolbar->addAction(m_cancelAction);
+    toolbar->addAction(m_stopAllAction);
     toolbar->addAction(m_removeAction);
+    toolbar->addAction(m_deleteCompletedAction);
+    toolbar->addSeparator();
+    toolbar->addAction(m_startQueueAction);
+    toolbar->addAction(m_stopQueueAction);
     toolbar->addSeparator();
     toolbar->addAction(m_captureAction);
     toolbar->addSeparator();
-    auto *details = toolbar->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("Detalles"),
+    m_detailsAction = toolbar->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("Detalles"),
                                       this, &MainWindow::showSelectedDetails);
-    details->setObjectName(QStringLiteral("detailsAction"));
+    m_detailsAction->setObjectName(QStringLiteral("detailsAction"));
     toolbar->addSeparator();
-    toolbar->addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("Opciones"),
+    toolbar->addAction(m_openFolderAction);
+    toolbar->addSeparator();
+    toolbar->addAction(classicIcon(QStringLiteral("options"), QColor(QStringLiteral("#90bfff"))), tr("Opciones"),
                        this, &MainWindow::openSettings);
 }
 
@@ -205,7 +245,7 @@ void MainWindow::createCentralLayout()
     auto *central = new QWidget(this);
     central->setObjectName(QStringLiteral("mainContent"));
     auto *layout = new QVBoxLayout(central);
-    layout->setContentsMargins(8, 8, 8, 4);
+    layout->setContentsMargins(7, 7, 7, 4);
     layout->setSpacing(7);
 
     auto *split = new QSplitter(Qt::Horizontal, central);
@@ -238,6 +278,9 @@ void MainWindow::createCentralLayout()
     unfinished->setIcon(0, style()->standardIcon(QStyle::SP_BrowserReload));
     auto *finished = new QTreeWidgetItem(m_categories, {tr("Terminadas")});
     finished->setData(0, Qt::UserRole, Finished);
+    auto *pending = new QTreeWidgetItem(m_categories, {tr("Pendientes")});
+    pending->setData(0, Qt::UserRole, Pending);
+    pending->setIcon(0, style()->standardIcon(QStyle::SP_FileDialogListView));
     finished->setIcon(0, style()->standardIcon(QStyle::SP_DialogApplyButton));
     m_categories->expandAll();
     m_categories->setCurrentItem(all);
@@ -261,30 +304,46 @@ void MainWindow::createCentralLayout()
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setAlternatingRowColors(true);
     m_table->setShowGrid(false);
-    m_table->setSortingEnabled(false);
+    m_categoryModel->setSortRole(DownloadTableModel::SortRole);
+    m_table->setSortingEnabled(true);
+    m_table->sortByColumn(DownloadTableModel::Date, Qt::DescendingOrder);
     m_table->setWordWrap(false);
     m_table->setIconSize(QSize(18,18));
     m_table->verticalHeader()->hide();
-    m_table->verticalHeader()->setDefaultSectionSize(36);
+    m_table->verticalHeader()->setDefaultSectionSize(30);
     m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Name, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Queue, QHeaderView::Fixed);
+    m_table->setColumnWidth(DownloadTableModel::Queue, 32);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Size, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Status, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Progress, QHeaderView::Fixed);
     m_table->setColumnWidth(DownloadTableModel::Progress, 145);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Speed, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Remaining, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Source, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Date, QHeaderView::ResizeToContents);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table, &QTableView::customContextMenuRequested, this, [this](const QPoint &pos) {
+        const QModelIndex clicked = m_table->indexAt(pos);
+        if (clicked.isValid()) m_table->selectRow(clicked.row());
         QMenu menu(this);
+        menu.addActions({m_openFileAction, m_openFolderAction, m_copyUrlAction});
+        menu.addSeparator();
         menu.addAction(m_startAction);
         menu.addAction(m_pauseAction);
         menu.addAction(m_cancelAction);
         menu.addSeparator();
+        menu.addAction(m_propertiesAction);
         menu.addAction(tr("Ver progreso / detalles"), this, &MainWindow::showSelectedDetails);
         menu.exec(m_table->viewport()->mapToGlobal(pos));
     });
-    connect(m_table, &QTableView::doubleClicked, this, &MainWindow::showSelectedDetails);
+    connect(m_table, &QTableView::doubleClicked, this, [this] {
+        const Download *item = selectedDownload();
+        if (item && item->status == DownloadStatus::Completed && QFileInfo::exists(item->destination))
+            openSelectedFile();
+        else showSelectedDetails();
+    });
     content->addWidget(m_table, 1);
     connect(m_categories, &QTreeWidget::currentItemChanged, this,
         [this, heading](QTreeWidgetItem *item) {
@@ -312,9 +371,9 @@ void MainWindow::applyStyle()
         "QMenuBar::item:selected, QMenu::item:selected { background: #30435b; }"
         "QMenu { background: #242b36; color: #e2e8f0; border: 1px solid #404b5c; }"
         "QMenu::item { padding: 7px 26px; }"
-        "QToolBar#mainToolbar { background: #242b36; color: #f1f5f9; border: none; border-bottom: 1px solid #405064; spacing: 6px; padding: 8px 12px; }"
+        "QToolBar#mainToolbar { background: #242b36; color: #f1f5f9; border: none; border-bottom: 1px solid #405064; spacing: 4px; padding: 6px 9px; }"
         "QToolBar::separator { background: #405064; width: 1px; margin: 8px 8px; }"
-        "QToolButton { color: #e2e8f0; background: transparent; padding: 7px 8px; border: 1px solid transparent; border-radius: 5px; min-width: 65px; }"
+        "QToolButton { color: #e2e8f0; background: transparent; padding: 5px 6px; border: 1px solid transparent; border-radius: 5px; min-width: 62px; }"
         "QToolButton:hover { background: #344359; border: 1px solid #526880; }"
         "QToolButton:pressed { background: #274462; }"
         "QTreeWidget#categories { color: #cdd8e7; background: #1e242e; border: 1px solid #343e4d; border-radius: 4px; outline: 0; }"
@@ -323,11 +382,12 @@ void MainWindow::applyStyle()
         "QTreeWidget#categories::item:hover { background: #303d4c; }"
         "QHeaderView::section { color: #bdc9d8; background: #27303d; border: none; border-right: 1px solid #343e4d; border-bottom: 1px solid #455366; padding: 9px 9px; font-weight: 600; }"
         "QTableView#downloadsTable { color: #e2e8f0; background: #1c222c; alternate-background-color: #222a36; gridline-color: #35404d; border: 1px solid #343e4d; selection-background-color: #285b84; selection-color: #ffffff; outline: 0; }"
-        "QTableView#downloadsTable::item { padding: 5px 7px; }"
+        "QTableView#downloadsTable::item { padding: 3px 6px; }"
         "QTableView#downloadsTable::item:hover { background: #2c3d51; }"
         "QLabel#sectionHeading { color: #a9c4e5; font-size: 13px; font-weight: 700; padding: 10px 5px 4px; }"
         "QLabel#footerNote { color: #8b99ab; background: #202630; padding: 9px 10px; border: 1px solid #333e4e; }"
         "QStatusBar { color: #b4c5d6; background: #202630; border-top: 1px solid #3d4b5c; padding: 4px; }"
+        "QLabel#downloadStatistics { color: #8dc9ec; font-size: 11px; margin-right: 7px; }"
         "QSplitter::handle { background: #303a48; width: 5px; }"
         "QScrollBar { background: #202630; }"
         "QScrollBar::handle { background: #4a596c; border-radius: 4px; min-height: 22px; min-width: 12px; }"
@@ -438,7 +498,8 @@ bool MainWindow::browserTransferReleased(const QString &id)
     if (!m_repository) return false;
     const QVector<Download> records = m_repository->all();
     for (const Download &item : records) {
-        if (item.id != id || item.status != DownloadStatus::Queued) continue;
+        if (item.id != id || item.status != DownloadStatus::AwaitingConfirmation) continue;
+        m_browserOwnedPending.remove(id);
         selectAndRevealDownload(id);
         showOffer(item);
         return true;
@@ -452,9 +513,10 @@ bool MainWindow::browserTransferAbandoned(const QString &id)
     if (!m_repository) return false;
     const QVector<Download> records = m_repository->all();
     for (const Download &item : records) {
-        if (item.id != id || item.status != DownloadStatus::Queued) continue;
+        if (item.id != id || item.status != DownloadStatus::AwaitingConfirmation) continue;
         QString error;
         if (!m_manager->remove(id, &error)) return false;
+        m_browserOwnedPending.remove(id);
         m_model->remove(id);
         statusBar()->showMessage(tr("Descarga devuelta al navegador."), 5000);
         return true;
@@ -495,6 +557,7 @@ bool MainWindow::beginOfferedDownload(const QString &id, const QString &destinat
         if (item.id != id) continue;
         item.destination = destination;
         item.fileName = QFileInfo(destination).fileName();
+        item.status = DownloadStatus::Queued;
         m_model->upsert(item);
         selectAndRevealDownload(id);
         showDetails(item);
@@ -510,12 +573,152 @@ bool MainWindow::beginOfferedDownload(const QString &id, const QString &destinat
 void MainWindow::showSelectedDetails()
 {
     const QString id = selectedDownloadId();
+    if (const Download *item = selectedDownload(); item && item->status == DownloadStatus::AwaitingConfirmation) {
+        if (m_browserOwnedPending.contains(id))
+            statusBar()->showMessage(tr("Esperando confirmación de cancelación de Chrome."), 6000);
+        else showOffer(*item);
+        return;
+    }
     for (int i = 0; i < m_model->rowCount(); ++i) {
         if (const Download *item = m_model->at(i); item && item->id == id) {
             showDetails(*item);
             return;
         }
     }
+}
+
+const Download *MainWindow::selectedDownload() const
+{
+    const QString id = selectedDownloadId();
+    for (int i = 0; i < m_model->rowCount(); ++i) {
+        if (const Download *item = m_model->at(i); item && item->id == id) return item;
+    }
+    return nullptr;
+}
+
+void MainWindow::updateActionStates()
+{
+    const Download *item = selectedDownload();
+    const bool selected = item != nullptr;
+    const bool active = selected && m_manager->isActive(item->id);
+    const bool completed = selected && item->status == DownloadStatus::Completed;
+    const bool canStart = selected && (item->status == DownloadStatus::AwaitingConfirmation
+        || item->status == DownloadStatus::Paused || item->status == DownloadStatus::Failed
+        || item->status == DownloadStatus::Queued);
+    m_startAction->setEnabled(canStart);
+    m_pauseAction->setEnabled(active);
+    m_cancelAction->setEnabled(selected && item->status != DownloadStatus::Cancelled
+        && item->status != DownloadStatus::Completed);
+    m_removeAction->setEnabled(selected && !active);
+    m_openFileAction->setEnabled(completed && QFileInfo::exists(item->destination));
+    m_openFolderAction->setEnabled(selected && QFileInfo(item->destination).absoluteDir().exists());
+    m_copyUrlAction->setEnabled(selected);
+    m_propertiesAction->setEnabled(selected);
+    m_detailsAction->setEnabled(selected);
+    int done = 0;
+    int ongoing = 0;
+    int pending = 0;
+    double speed = 0;
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        if (const Download *d = m_model->at(row)) {
+            if (d->status == DownloadStatus::Completed) ++done;
+            if (d->status == DownloadStatus::Downloading || d->status == DownloadStatus::Inspecting) {
+                ++ongoing;
+                speed += d->speedBytesPerSecond;
+            }
+            if (d->status == DownloadStatus::Queued || d->status == DownloadStatus::AwaitingConfirmation) ++pending;
+        }
+    }
+    m_stopAllAction->setEnabled(ongoing > 0);
+    m_stopQueueAction->setEnabled(m_manager->queueRunning());
+    m_deleteCompletedAction->setEnabled(done > 0);
+    m_statisticsLabel->setText(tr("Total: %1  ·  Activas: %2  ·  Pendientes: %3  ·  Terminadas: %4  ·  %5")
+        .arg(m_model->rowCount()).arg(ongoing).arg(pending).arg(done).arg(formatSpeed(speed)));
+}
+
+void MainWindow::stopQueue()
+{
+    m_manager->stopQueue();
+    statusBar()->showMessage(tr("La cola automática está detenida. Las transferencias actuales continúan."), 6000);
+    updateActionStates();
+}
+
+void MainWindow::stopAllDownloads()
+{
+    m_manager->stopQueue();
+    m_manager->pauseAll();
+    statusBar()->showMessage(tr("Todas las descargas activas se han pausado."), 6000);
+    updateActionStates();
+}
+
+void MainWindow::removeCompleted()
+{
+    if (QMessageBox::question(this, tr("Limpiar terminadas"),
+        tr("¿Eliminar las descargas terminadas del historial? Los archivos descargados se conservarán."))
+        != QMessageBox::Yes) return;
+    int removed = 0;
+    QString error;
+    const auto records = m_repository->all(&error);
+    if (!error.isEmpty()) { statusBar()->showMessage(error, 8000); return; }
+    for (const Download &d : records) {
+        if (d.status != DownloadStatus::Completed || m_manager->isActive(d.id)) continue;
+        if (m_manager->remove(d.id, &error)) {
+            m_model->remove(d.id);
+            ++removed;
+        } else {
+            statusBar()->showMessage(error, 8000);
+            return;
+        }
+    }
+    statusBar()->showMessage(tr("%1 registros terminados eliminados; archivos conservados.").arg(removed), 6000);
+}
+
+void MainWindow::openSelectedFile()
+{
+    const Download *d = selectedDownload();
+    if (!d || d->status != DownloadStatus::Completed) return;
+    if (!QFileInfo(d->destination).isFile()) {
+        QMessageBox::warning(this, tr("Archivo no encontrado"),
+            tr("El archivo ya no existe en la ruta guardada."));
+        return;
+    }
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(d->destination)))
+        statusBar()->showMessage(tr("Windows/Linux no pudo abrir el archivo."), 6000);
+}
+
+void MainWindow::openSelectedFolder()
+{
+    const Download *d = selectedDownload();
+    if (!d) return;
+    const QString folder = QFileInfo(d->destination).absolutePath();
+    if (!QDir(folder).exists() || !QDesktopServices::openUrl(QUrl::fromLocalFile(folder)))
+        statusBar()->showMessage(tr("No se pudo abrir la carpeta de descarga."), 6000);
+}
+
+void MainWindow::copySelectedUrl()
+{
+    if (const Download *d = selectedDownload()) {
+        QApplication::clipboard()->setText(d->url);
+        statusBar()->showMessage(tr("Dirección URL copiada."), 3000);
+    }
+}
+
+void MainWindow::showSelectedProperties()
+{
+    const Download *d = selectedDownload();
+    if (!d) return;
+    const QString summary = tr("Archivo: %1\nEstado: %2\nTamaño: %3\nRecibido: %4\n"
+        "Origen: %5\nDestino: %6\nFecha: %7\n"
+        "Conexiones: %8\nError: %9")
+        .arg(d->fileName, statusText(d->status), formatBytes(d->totalBytes),
+             formatBytes(d->downloadedBytes), QUrl(d->url).host(), d->destination,
+             d->createdAt.toLocalTime().toString(QStringLiteral("dd/MM/yyyy hh:mm")),
+             d->connectionInfo.isEmpty() ? tr("Información no disponible") : d->connectionInfo,
+             d->error.isEmpty() ? tr("Ninguno") : d->error);
+    QMessageBox box(QMessageBox::Information, tr("Propiedades de la descarga"), summary,
+                    QMessageBox::Ok, this);
+    box.setTextFormat(Qt::PlainText);
+    box.exec();
 }
 
 QString MainWindow::selectedDownloadId() const
@@ -585,14 +788,15 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
     }
     download.destination = destination;
     download.fileName = QFileInfo(destination).fileName();
-    download.status = DownloadStatus::Queued;
+    download.status = DownloadStatus::AwaitingConfirmation;
     download.totalBytes = totalBytes > 0 ? totalBytes : -1;
     download.createdAt = QDateTime::currentDateTimeUtc();
     download.updatedAt = download.createdAt;
     if (!m_repository || !m_repository->insert(download, error)) return false;
     m_model->upsert(download);
     selectAndRevealDownload(download.id);
-    if (!browserOwned) showOffer(download);
+    if (browserOwned) m_browserOwnedPending.insert(download.id);
+    else showOffer(download);
     if (id) *id = download.id;
     statusBar()->showMessage(tr("Descarga preparada: confirma Iniciar o Cancelar."), 8000);
     return true;
@@ -683,6 +887,12 @@ void MainWindow::startSelected()
 {
     const QString id = selectedDownloadId();
     if (id.isEmpty()) return;
+    if (const Download *item = selectedDownload(); item && item->status == DownloadStatus::AwaitingConfirmation) {
+        if (m_browserOwnedPending.contains(id)) {
+            statusBar()->showMessage(tr("Esperando que Chrome libere la descarga."), 6000);
+        } else showOffer(*item);
+        return;
+    }
     QString error;
     if (!m_manager->start(id, &error)) statusBar()->showMessage(error, 5000);
 }
@@ -718,6 +928,7 @@ void MainWindow::removeSelected()
         statusBar()->showMessage(error, 5000);
         return;
     }
+    m_browserOwnedPending.remove(id);
     m_model->remove(id);
 }
 

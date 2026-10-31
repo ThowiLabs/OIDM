@@ -82,3 +82,10 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Reproducido y corregido el error NSIS *Installer integrity check has failed*: el instalador con LZMA entregaba CRC interno inconsistente; Zlib solid produce CRC válido.
 - CRCCheck force y prueba previa a compartir el instalador, con verificación Python independiente del CRC (la extracción 7z sola era insuficiente).
 - Prueba de instalación Windows bajo Wine y `--ui-self-test` exitosa, ejecutable instalado idéntico al compilado.
+
+## Extensión con panel + acciones clásicas (0.5.0)
+
+- Popup MV3 con estado online/offline, pausa de capturas, detección automática, últimos envíos, sin copiar recursos de IDM.
+- Comandos para abrir archivo/carpeta, copiar enlace, propiedades y limpiar historial; ordenación por columnas.
+- Nuevo estado `awaiting_confirmation` evita que `startQueued()` o el botón Iniciar lancen una reserva de Chrome antes de su cancelación y la confirmación del usuario.
+- Pendiente: publicación oficial de extensión para instalación con tienda, compatibilidad Firefox, funciones avanzadas de IDM y verificación con MediaFire real en un Chrome Windows.

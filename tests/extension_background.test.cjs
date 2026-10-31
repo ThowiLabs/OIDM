@@ -14,6 +14,7 @@ function extensionMock(nativeResponse = { ok: true }) {
     runtime: {
       onInstalled: { addListener: fn => { listeners.installed = fn; } },
       onStartup: { addListener: fn => { listeners.startup = fn; } },
+      onMessage: { addListener: fn => { listeners.message = fn; } },
       sendNativeMessage: (host, request, callback) => {
         calls.push(['native', host, request]);
         const response = typeof nativeResponse === 'function' ? nativeResponse(request) : nativeResponse;
@@ -153,22 +154,53 @@ async function main() {
   {
     const env = extensionMock(req => req.type === 'capture-state'
       ? { ok: true, paused: false } : { ok: true, paused: true });
-    env.listeners.action();
+    let answer;
+    assert.equal(env.listeners.message({ type: 'oidm.set-capture', paused: true }, {}, data => { answer = data; }), true);
     await settle();
+    assert.equal(answer.ok, true);
     assert.deepEqual(env.calls.filter(x => x[0] === 'native').map(x => x[2].type),
       ['capture-state', 'set-capture']);
     assert.equal(env.calls.find(x => x[0] === 'native' && x[2].type === 'set-capture')[2].paused, true);
     assert.ok(env.calls.some(x => x[0] === 'badge' && x[1].text === 'OFF'));
-    console.log('OK: extension icon pauses capture');
+    console.log('OK: popup pauses capture and updates badge');
   }
   {
     const env = extensionMock(req => req.type === 'capture-state'
       ? { ok: true, paused: true } : { ok: true, paused: false });
-    env.listeners.action();
+    let answer;
+    env.listeners.message({ type: 'oidm.set-capture', paused: false }, {}, data => { answer = data; });
     await settle();
+    assert.equal(answer.ok, true);
     assert.equal(env.calls.find(x => x[0] === 'native' && x[2].type === 'set-capture')[2].paused, false);
     assert.ok(env.calls.some(x => x[0] === 'badge' && x[1].text === 'ON'));
-    console.log('OK: extension icon resumes capture');
+    console.log('OK: popup resumes capture and updates badge');
+  }
+  {
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: false } : { ok: false, error: 'bad' });
+    let status;
+    env.listeners.message({ type: 'oidm.get-status' }, {}, response => { status = response; });
+    await settle();
+    assert.equal(status.ok, true);
+    assert.equal(status.paused, false);
+    assert.equal(status.automatic, true);
+    assert.equal(status.recentTransfers.length, 0);
+    let changed;
+    env.listeners.message({ type: 'oidm.set-automatic', enabled: false }, {}, response => { changed = response; });
+    await settle();
+    assert.equal(changed.automatic, false);
+    assert.ok(env.calls.some(x => x[0] === 'storageSet' && x[1].automaticInterception === false));
+    console.log('OK: popup reads status and saves auto-capture preference');
+  }
+  {
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../extension/chromium/manifest.json'), 'utf8'));
+    const popup = fs.readFileSync(path.resolve(__dirname, '../extension/chromium/popup.html'), 'utf8');
+    const script = fs.readFileSync(path.resolve(__dirname, '../extension/chromium/popup.js'), 'utf8');
+    assert.equal(manifest.action.default_popup, 'popup.html');
+    assert.ok(popup.includes('popup.js') && popup.includes('popup.css'));
+    assert.ok(!popup.includes('<script>') && !popup.includes('onclick='), 'No inline JS in Chrome MV3 popup');
+    assert.ok(!script.includes('.innerHTML'), 'User-facing data must use textContent');
+    console.log('OK: popup resources and Content Security Policy hygiene');
   }
 
 }

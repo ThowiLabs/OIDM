@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OIDM — Open Download Manager",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Captura descargas HTTP/HTTPS y envía las transferencias a OIDM (también MediaFire).",
   "permissions": [
     "contextMenus",
@@ -14,7 +14,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "OIDM — Open Download Manager"
+    "default_title": "OIDM — Administrador de descargas",
+    "default_popup": "popup.html"
   },
   "icons": {
     "16": "icons/oidm-16.png",

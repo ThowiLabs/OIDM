@@ -81,6 +81,10 @@ bool DownloadManager::start(const QString &id, QString *error) {
 
     Download download;
     if (!loadDownload(id, &download, error)) return false;
+    if (download.status == DownloadStatus::AwaitingConfirmation) {
+        setError(error, tr("Confirma primero los datos del archivo y pulsa Iniciar descarga."));
+        return false;
+    }
     if (download.status == DownloadStatus::Completed || download.status == DownloadStatus::Cancelled) {
         setError(error, tr("La descarga ya terminó o fue cancelada."));
         return false;
@@ -154,6 +158,7 @@ bool DownloadManager::isActive(const QString &id) const {
 
 void DownloadManager::startQueued() {
     if (m_shuttingDown || m_repository == nullptr) return;
+    m_queueRunning = true;
     QString error;
     const auto downloads = m_repository->all(&error);
     if (!error.isEmpty()) {
@@ -167,6 +172,10 @@ void DownloadManager::startQueued() {
             if (!start(it->id, &startError)) qWarning() << "OIDM: cannot start queued item:" << startError;
         }
     }
+}
+
+void DownloadManager::stopQueue() {
+    m_queueRunning = false;
 }
 
 void DownloadManager::pauseAll() {
@@ -193,7 +202,8 @@ void DownloadManager::onTaskFinished(const Download &download) {
     }
     emit downloadUpdated(download);
     emit downloadFinished(download);
-    if (!m_shuttingDown) QTimer::singleShot(0, this, &DownloadManager::startQueued);
+    if (!m_shuttingDown && m_queueRunning)
+        QTimer::singleShot(0, this, &DownloadManager::startQueued);
 }
 
 } // namespace oidm

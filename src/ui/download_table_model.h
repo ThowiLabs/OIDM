@@ -10,7 +10,8 @@ namespace oidm {
 class DownloadTableModel final : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Column { Name = 0, Size, Status, Progress, Speed, Date, ColumnCount };
+    enum Column { Name = 0, Queue, Size, Status, Progress, Remaining, Speed, Source, Date, ColumnCount };
+    static constexpr int SortRole = Qt::UserRole + 1;
 
     explicit DownloadTableModel(QObject *parent = nullptr);
     [[nodiscard]] int rowCount(const QModelIndex &parent = {}) const override;

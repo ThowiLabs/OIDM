@@ -6,12 +6,14 @@
 #include <QMainWindow>
 #include <QPointer>
 #include <QHash>
+#include <QSet>
 
 class QCloseEvent;
 class QTableView;
 class QTreeWidget;
 class QSortFilterProxyModel;
 class QAction;
+class QLabel;
 
 namespace oidm {
 
@@ -37,6 +39,14 @@ public slots:
 private slots:
     void showSelectedDetails();
     void openSettings();
+    void stopQueue();
+    void stopAllDownloads();
+    void removeCompleted();
+    void openSelectedFile();
+    void openSelectedFolder();
+    void copySelectedUrl();
+    void showSelectedProperties();
+    void updateActionStates();
     void toggleBrowserCapture();
     void startSelected();
     void startQueue();
@@ -47,6 +57,7 @@ private slots:
 
 private:
     [[nodiscard]] QString selectedDownloadId() const;
+    [[nodiscard]] const Download *selectedDownload() const;
     void selectAndRevealDownload(const QString &id);
     void showDetails(const Download &download);
     void showOffer(const Download &download);
@@ -65,6 +76,7 @@ public:
     QSortFilterProxyModel *m_categoryModel = nullptr;
     QHash<QString, QPointer<DownloadProgressDialog>> m_details;
     QHash<QString, QPointer<DownloadOfferDialog>> m_offers;
+    QSet<QString> m_browserOwnedPending;
     QTableView *m_table = nullptr;
     QTreeWidget *m_categories = nullptr;
     QAction *m_captureAction = nullptr;
@@ -74,6 +86,15 @@ public:
     QAction *m_pauseAction = nullptr;
     QAction *m_cancelAction = nullptr;
     QAction *m_removeAction = nullptr;
+    QAction *m_stopAllAction = nullptr;
+    QAction *m_deleteCompletedAction = nullptr;
+    QAction *m_stopQueueAction = nullptr;
+    QAction *m_openFileAction = nullptr;
+    QAction *m_openFolderAction = nullptr;
+    QAction *m_copyUrlAction = nullptr;
+    QAction *m_propertiesAction = nullptr;
+    QAction *m_detailsAction = nullptr;
+    QLabel *m_statisticsLabel = nullptr;
 };
 
 } // namespace oidm

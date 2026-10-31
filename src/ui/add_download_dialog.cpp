@@ -59,7 +59,7 @@ Download AddDownloadDialog::download() const
     item.url = url.toString(QUrl::FullyEncoded);
     item.destination = m_destination->text().trimmed();
     item.fileName = QFileInfo(item.destination).fileName();
-    item.status = DownloadStatus::Queued;
+    item.status = DownloadStatus::AwaitingConfirmation;
     item.createdAt = QDateTime::currentDateTimeUtc();
     item.updatedAt = item.createdAt;
     return item;

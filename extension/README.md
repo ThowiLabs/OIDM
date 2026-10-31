@@ -1,6 +1,6 @@
 # OIDM — integración con Chrome / Edge
 
-**Recomendado en Windows:** instala `OIDM-Windows-x64-v0.4.1-Setup.exe`. El instalador coloca los archivos de la extensión, registra el host nativo y abre un asistente que te lleva a la página de extensiones del navegador. Chrome/Edge exige una autorización final para cargar la extensión local. No hay que copiar IDs ni ejecutar comandos.
+**Recomendado en Windows:** instala `OIDM-Windows-x64-v0.5.0-Setup.exe`. El instalador coloca los archivos de la extensión, registra el host nativo y abre un asistente que te lleva a la página de extensiones del navegador. Chrome/Edge exige una autorización final para cargar la extensión local. No hay que copiar IDs ni ejecutar comandos.
 
 
 ## Método portable alternativo para Windows
@@ -9,7 +9,7 @@
 2. Abre `OIDM.exe`. Desde esta versión el programa registra automáticamente en el usuario actual su host nativo para Chrome y Edge.
 3. Abre `chrome://extensions` (Chrome) o `edge://extensions` (Edge), activa **Modo de desarrollador** y selecciona **Cargar descomprimida**.
 4. Selecciona **la carpeta `extension/chromium` del nuevo ZIP**. Si había una versión anterior de OIDM, elimínala primero y vuelve a cargar la nueva extensión.
-5. Haz clic en el icono de OIDM en la barra de extensiones: debe mostrar **OIDM conectado** y la insignia `OK`.
+5. Haz clic en el icono de OIDM en la barra de extensiones: abre un panel con **OIDM conectado**, controles de capturas y últimas transferencias.
 6. En MediaFire, abre una URL compartida y pulsa el botón de descargar normalmente. Cuando Chrome inicia una transferencia real, la extensión la pausa y se la entrega a OIDM. Si el programa no responde, Chrome la reanuda.
 
 ### Si no conecta
@@ -29,9 +29,9 @@ No es necesario instalar Qt ni ejecutar el host de forma permanente. Puede desha
 
 ## Instalación mediante asistente (Windows, 0.3.0)
 
-Descarga y ejecuta `OIDM-Windows-x64-v0.4.1-Setup.exe` con tu cuenta normal de Windows (no requiere Administrador). El instalador coloca OIDM y su extensión en una ruta estable, configura los accesos de inicio y registra el host nativo. En la última pantalla deja seleccionada la opción **Abrir OIDM y conectar Chrome / Edge**.
+Descarga y ejecuta `OIDM-Windows-x64-v0.5.0-Setup.exe` con tu cuenta normal de Windows (no requiere Administrador). El instalador coloca OIDM y su extensión en una ruta estable, configura los accesos de inicio y registra el host nativo. En la última pantalla deja seleccionada la opción **Abrir OIDM y conectar Chrome / Edge**.
 
-En el asistente de OIDM pulsa **Preparar y comprobar conexión**, después **Abrir Chrome** o **Abrir Edge**, habilita el modo de desarrollador y usa **Cargar descomprimida** para seleccionar la carpeta de extensión que OIDM abre o copia automáticamente al portapapeles. Es el único paso manual requerido por las restricciones de las extensiones no publicadas en Chrome Web Store / Microsoft Edge Add-ons. Al hacer clic en el icono de la extensión instalada debería responder **OIDM conectado**.
+En el asistente de OIDM pulsa **Preparar y comprobar conexión**, después **Abrir Chrome** o **Abrir Edge**, habilita el modo de desarrollador y usa **Cargar descomprimida** para seleccionar la carpeta de extensión que OIDM abre o copia automáticamente al portapapeles. Es el único paso manual requerido por las restricciones de las extensiones no publicadas en Chrome Web Store / Microsoft Edge Add-ons. Al hacer clic en el icono de la extensión instalada verás un panel con el estado **OIDM conectado**.
 
 Si necesitas abrir de nuevo el asistente: **Ayuda → Instalar / conectar extensión Chrome y Edge**. Para instalar con un único clic desde la tienda, primero habría que publicar allí la extensión, algo que requiere una cuenta de desarrollador y aprobación de la tienda.
 
@@ -39,6 +39,12 @@ Si necesitas abrir de nuevo el asistente: **Ayuda → Instalar / conectar extens
 
 **En OIDM:** pulsa **Pausar capturas** en la barra o en Herramientas. Activado significa que Chrome/Edge descarga sus archivos por sí mismo. Desmárcalo para volver a interceptar.
 
-**En Chrome/Edge:** haz clic en el icono de la extensión: la insignia **OFF** indica capturas pausadas y **ON** indica capturas activas. Al cambiarlo desde la extensión, OIDM leerá el mismo estado guardado. Puedes cerrar OIDM; la pausa se mantiene al volver a abrirlo. Las descargas de OIDM iniciadas antes de pulsar OFF no se detienen.
+**En Chrome/Edge:** haz clic en el icono de la extensión y abre el panel de OIDM. El interruptor **Capturar descargas** controla la pausa, y el interruptor **Detección automática** controla la captura de nuevos archivos. La insignia **OFF** indica capturas pausadas y **ON** capturas activas. Al cambiarlo desde el panel, OIDM leerá el mismo estado guardado. Puedes cerrar OIDM; la pausa se mantiene al volver a abrirlo. Las descargas de OIDM iniciadas antes de pulsar OFF no se detienen.
 
 Si Chrome no logra comunicarse con el host nativo, la transferencia no se interrumpe y se mantiene en Chrome.
+
+## Panel propio de OIDM (0.5.0)
+
+La extensión ahora abre un panel compacto oscuro al pulsar su icono. Puedes comprobar el estado del host nativo, pulsar **Volver a comprobar**, activar/desactivar **Capturar descargas** o **Detección automática**, y consultar los últimos seis envíos (solo nombre y dominio, sin copiar URLs privadas). Los controles se comunican con el service worker y con el host nativo. Los archivos que OIDM acepta se quedan pendientes hasta que pulses **Iniciar descarga** en la aplicación.
+
+Si después de instalar 0.5.0 sigue apareciendo la extensión anterior sin panel, elimínala de `chrome://extensions` y carga la carpeta `extension/chromium` nueva; Chrome no refresca automáticamente las extensiones locales al sustituir archivos.

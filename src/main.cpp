@@ -53,6 +53,18 @@ int runUiSelfTest()
     if (!table->currentIndex().isValid() || table->currentIndex().data(Qt::UserRole).toString() != id) return 24;
     if (categories->currentItem() != categories->topLevelItem(0)) return 25;
     if (window.findChildren<DownloadOfferDialog *>().size() != 0) return 26;
+    // Pending browser-owned downloads are never started by the normal queue
+    // or by an accidental click on the Start action before Chrome releases.
+    QMetaObject::invokeMethod(&window, "startQueue", Qt::DirectConnection);
+    QMetaObject::invokeMethod(&window, "startSelected", Qt::DirectConnection);
+    QCoreApplication::processEvents();
+    if (repository.all().first().status != DownloadStatus::AwaitingConfirmation
+        || !window.findChildren<DownloadOfferDialog *>().isEmpty()) return 47;
+    if (table->model()->columnCount() != DownloadTableModel::ColumnCount
+        || table->model()->columnCount() != 9) return 48;
+    // Table is a real sortable model, rather than a static decorative list.
+    if (table->model()->data(table->model()->index(0, DownloadTableModel::Source),
+                              DownloadTableModel::SortRole).toString() != QStringLiteral("127.0.0.1")) return 49;
     if (!window.browserTransferReleased(id)) return 30;
     if (window.findChildren<DownloadOfferDialog *>().size() != 1) return 31;
     if (!window.browserTransferReleased(id)) return 32; // idempotent show, no new download
@@ -67,7 +79,7 @@ int runUiSelfTest()
     if (!connections || connections->value() < 1 || connections->value() > 32) return 35;
     if (SettingsDialog::preferredConnections() < 1 || SettingsDialog::preferredConnections() > 32) return 29;
     const auto records = repository.all();
-    if (records.size() != 1 || records.constFirst().id != id || records.constFirst().status != DownloadStatus::Queued) return 27;
+    if (records.size() != 1 || records.constFirst().id != id || records.constFirst().status != DownloadStatus::AwaitingConfirmation) return 27;
     // Browser is fully canceled before user sees the offer. Cancel removes
     // the prepared record; no network DownloadTask is ever started.
     offer->findChild<QPushButton *>(QStringLiteral("downloadOfferCancel"))->click();
@@ -81,7 +93,7 @@ int runUiSelfTest()
             QStringLiteral("oidm-start-test.bin"), QString(), 321, true, &startedId, &error)) return 37;
     if (!window.browserTransferReleased(startedId)) return 38;
     const auto beforeStart = repository.all();
-    if (beforeStart.size() != 1 || beforeStart.first().status != DownloadStatus::Queued) return 39;
+    if (beforeStart.size() != 1 || beforeStart.first().status != DownloadStatus::AwaitingConfirmation) return 39;
     DownloadOfferDialog *secondOffer = nullptr;
     for (DownloadOfferDialog *candidate : window.findChildren<DownloadOfferDialog *>()) {
         if (candidate->downloadId() == startedId) { secondOffer = candidate; break; }

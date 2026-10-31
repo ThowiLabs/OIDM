@@ -158,8 +158,8 @@ bool DownloadRepository::update(const Download &item, QString *error) {
 
 bool DownloadRepository::updateQueuedDestination(const QString &id, const QString &destination, QString *error) {
     QSqlQuery query(m_database);
-    query.prepare(QStringLiteral("UPDATE downloads SET destination=:destination,file_name=:name "
-        "WHERE id=:id AND status='queued'"));
+    query.prepare(QStringLiteral("UPDATE downloads SET destination=:destination,file_name=:name,status='queued' "
+        "WHERE id=:id AND status='awaiting_confirmation'"));
     query.bindValue(QStringLiteral(":destination"), destination);
     query.bindValue(QStringLiteral(":name"), QFileInfo(destination).fileName());
     query.bindValue(QStringLiteral(":id"), id);

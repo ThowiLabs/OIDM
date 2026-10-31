@@ -14,7 +14,8 @@ enum class DownloadStatus {
     Paused,
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    AwaitingConfirmation // Never launch until the user has approved the file.
 };
 
 struct Download {

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OIDM — Captura de descargas</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand-mark" aria-hidden="true">↓</div>
+      <div><strong>OIDM</strong><small>Descargas integradas</small></div>
+      <span class="version">v0.5</span>
+    </header>
+    <section class="connection" aria-live="polite">
+      <div class="connection-header"><span id="indicator" class="indicator"></span><strong id="connection-label">Comprobando…</strong></div>
+      <p id="connection-description">Consultando OIDM y su host nativo.</p>
+      <button type="button" id="retry">Volver a comprobar</button>
+    </section>
+    <section class="switches" aria-label="Preferencias de captura">
+      <label class="switch-row" for="capture">
+        <span><strong>Capturar descargas</strong><small>Enviar archivos a OIDM</small></span>
+        <input id="capture" type="checkbox" disabled>
+      </label>
+      <label class="switch-row" for="automatic">
+        <span><strong>Detección automática</strong><small>Chrome y Edge · HTTP/HTTPS</small></span>
+        <input id="automatic" type="checkbox" disabled>
+      </label>
+    </section>
+    <section class="history">
+      <div class="history-title"><strong>Últimos envíos</strong><span>Hasta 6</span></div>
+      <ul id="recent"><li class="empty">Sin transferencias recientes</li></ul>
+    </section>
+    <footer><span>Los archivos se confirman en OIDM antes de iniciar.</span></footer>
+  </main>
+</body>
+</html>

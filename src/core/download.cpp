@@ -7,6 +7,7 @@ namespace oidm {
 QString statusText(const DownloadStatus status) {
     switch (status) {
     case DownloadStatus::Queued: return QStringLiteral("En cola");
+    case DownloadStatus::AwaitingConfirmation: return QStringLiteral("Pendiente de confirmar");
     case DownloadStatus::Inspecting: return QStringLiteral("Comprobando");
     case DownloadStatus::Downloading: return QStringLiteral("Descargando");
     case DownloadStatus::Paused: return QStringLiteral("Pausada");
@@ -20,6 +21,7 @@ QString statusText(const DownloadStatus status) {
 QString statusKey(const DownloadStatus status) {
     switch (status) {
     case DownloadStatus::Queued: return QStringLiteral("queued");
+    case DownloadStatus::AwaitingConfirmation: return QStringLiteral("awaiting_confirmation");
     case DownloadStatus::Inspecting: return QStringLiteral("inspecting");
     case DownloadStatus::Downloading: return QStringLiteral("downloading");
     case DownloadStatus::Paused: return QStringLiteral("paused");
@@ -31,6 +33,7 @@ QString statusKey(const DownloadStatus status) {
 }
 
 DownloadStatus statusFromKey(const QString &key) {
+    if (key == QStringLiteral("awaiting_confirmation")) return DownloadStatus::AwaitingConfirmation;
     if (key == QStringLiteral("inspecting")) return DownloadStatus::Inspecting;
     if (key == QStringLiteral("downloading")) return DownloadStatus::Downloading;
     if (key == QStringLiteral("paused")) return DownloadStatus::Paused;

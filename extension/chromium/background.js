@@ -89,34 +89,62 @@ chrome.contextMenus.onClicked.addListener((info) => {
     referrer: validUrl(info.pageUrl) ? info.pageUrl : "",
     suggestedName: suggestedName(url)
   }).then(response => {
+    if (response.ok === true) void rememberTransfer(suggestedName(url), url);
     showStatus(response.ok === true,
-      response.ok ? "Descarga añadida a OIDM." : response.error || "OIDM no aceptó el enlace.");
+      response.ok ? "Descarga preparada en OIDM: confirma Iniciar o Cancelar." : response.error || "OIDM no aceptó el enlace.");
   });
 });
 
-// One click pauses/resumes all *new* browser captures. Existing OIDM transfers
-// continue, and Chrome never stops new transfers while capture is paused.
-chrome.action.onClicked.addListener(() => {
+// The browser action opens a useful popup. Its controls talk to this MV3
+// service worker, which alone performs Native Messaging and changes badges.
+// All settings stay inside Chrome and only minimum metadata reaches OIDM.
+chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+  if (!message || typeof message.type !== "string") return false;
   void (async () => {
-    const state = await sendNative({ type: "capture-state" });
-    if (state.ok !== true) {
-      showStatus(false, state.error || "El host de OIDM no responde; Chrome mantiene sus descargas.");
+    if (message.type === "oidm.get-status") {
+      const [capture, saved] = await Promise.all([
+        sendNative({ type: "capture-state" }),
+        chrome.storage.local.get({ automaticInterception: true, recentTransfers: [] })
+      ]);
+      if (capture.ok === true) showCaptureBadge(capture.paused === true);
+      reply({ ok: capture.ok === true, error: capture.error || "",
+        paused: capture.paused === true,
+        automatic: saved.automaticInterception !== false,
+        recentTransfers: Array.isArray(saved.recentTransfers) ? saved.recentTransfers.slice(0, 6) : [] });
       return;
     }
-    const nextPaused = state.paused !== true;
-    const result = await sendNative({ type: "set-capture", paused: nextPaused });
-    if (result.ok !== true) {
-      showStatus(false, result.error || "No se pudo cambiar el estado de capturas.");
+    if (message.type === "oidm.set-capture") {
+      const state = await sendNative({ type: "capture-state" });
+      if (state.ok !== true) { reply(state); return; }
+      const paused = message.paused === true;
+      const result = await sendNative({ type: "set-capture", paused });
+      if (result.ok === true) {
+        await chrome.storage.local.set({ capturePaused: paused });
+        showCaptureBadge(paused);
+      }
+      reply({ ok: result.ok === true, paused, error: result.error || "" });
       return;
     }
-    await chrome.storage.local.set({ capturePaused: nextPaused });
-    showCaptureBadge(nextPaused);
-    showStatus(true, nextPaused
-      ? "Capturas pausadas. Chrome/Edge descargará normalmente. Haz clic para reanudar OIDM."
-      : "Capturas activadas. OIDM interceptará nuevas descargas. Haz clic para pausar.");
-    showCaptureBadge(nextPaused);
-  })();
+    if (message.type === "oidm.set-automatic") {
+      const enabled = message.enabled === true;
+      await chrome.storage.local.set({ automaticInterception: enabled });
+      reply({ ok: true, automatic: enabled });
+      return;
+    }
+    reply({ ok: false, error: "Comando no reconocido" });
+  })().catch(error => reply({ ok: false, error: String(error) }));
+  return true; // asynchronous response, keep the message port open
 });
+
+async function rememberTransfer(name, url) {
+  try {
+    const old = await chrome.storage.local.get({ recentTransfers: [] });
+    const recent = Array.isArray(old.recentTransfers) ? old.recentTransfers : [];
+    recent.unshift({ name: String(name || "archivo").slice(0, 100),
+      host: new URL(url).hostname.slice(0, 120), at: Date.now() });
+    await chrome.storage.local.set({ recentTransfers: recent.slice(0, 6) });
+  } catch { /* History is optional; never break a download. */ }
+}
 
 function showCaptureBadge(paused) {
   chrome.action.setBadgeBackgroundColor({ color: paused ? "#b7791f" : "#18845d" });
@@ -216,6 +244,7 @@ async function interceptDownload(item) {
         (released.error || "Sin respuesta") + ". Revisa la cola de OIDM.");
       return;
     }
+    void rememberTransfer(filenameFromDownload(current), url);
     showStatus(true, "Chrome canceló su transferencia. Confirma Iniciar en OIDM.");
   } catch (error) {
     if (preparedId && paused) {

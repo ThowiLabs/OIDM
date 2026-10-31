@@ -100,3 +100,10 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Soluciona fallback constante a 1 conexión de CDNs HTTP sin ETag/Last-Modified, mediante seis rangos simultáneos si responden `206`, `Content-Range` y tamaño válido.
 - Sigue prohibido reanudar fragmentos entre sesiones sin un validador del recurso; vista de progreso informa modo de conexiones. Umbral 768 KiB.
 - Pruebas C++ verifican transferencia sin ETag y solicitudes solapadas.
+
+## Beta 0.5.0, 31-oct-2026: etapa inicial interfaz/Chrome
+
+- UI Qt6 clásica oscura: columnas ordenables, iconografía propia QPainter, herramientas reales de abrir archivo/carpeta, copiar URL, limpiar historial sin borrar archivos, detener cola, detener todas las transferencias activas y propiedades.
+- Chrome/Edge MV3 popup de control y diagnóstico sin recursos propietarios IDM; últimas seis transferencias como resumen local.
+- Estado seguro `awaiting_confirmation` para separar entrega del navegador, cancelación de Chrome y aprobación del usuario; no se auto-inicia con la cola.
+- Etapas futuras: scheduler, limitador velocidad, Site Grabber, FTP, Firefox, vídeo, comparativa funcional y visual completa.

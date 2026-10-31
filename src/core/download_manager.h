@@ -24,7 +24,9 @@ public:
     [[nodiscard]] bool remove(const QString &id, QString *error = nullptr);
     [[nodiscard]] bool isActive(const QString &id) const;
     void startQueued();
+    void stopQueue();
     void pauseAll();
+    [[nodiscard]] bool queueRunning() const noexcept { return m_queueRunning; }
 
 signals:
     void downloadUpdated(const oidm::Download &download);
@@ -41,6 +43,7 @@ private:
     DownloadRepository *m_repository{nullptr};
     QHash<QString, DownloadTask *> m_tasks;
     bool m_shuttingDown{false};
+    bool m_queueRunning{true};
     static constexpr int MaxConcurrentDownloads = 3;
 };
 
