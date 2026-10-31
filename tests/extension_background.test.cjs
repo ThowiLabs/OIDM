@@ -16,15 +16,20 @@ function extensionMock(nativeResponse = { ok: true }) {
       onStartup: { addListener: fn => { listeners.startup = fn; } },
       sendNativeMessage: (host, request, callback) => {
         calls.push(['native', host, request]);
-        queueMicrotask(() => callback(nativeResponse));
+        const response = typeof nativeResponse === 'function' ? nativeResponse(request) : nativeResponse;
+        queueMicrotask(() => callback(response));
       },
       lastError: null
     },
-    storage: { local: { get: async defaults => defaults } },
+    storage: { local: {
+      get: async defaults => { calls.push(['storage', defaults]); return defaults; },
+      set: async options => { calls.push(['storageSet', options]); }
+    } },
     action: {
       onClicked: { addListener: fn => { listeners.action = fn; } },
       setBadgeBackgroundColor: options => { calls.push(['color', options]); },
-      setBadgeText: options => { calls.push(['badge', options]); }
+      setBadgeText: options => { calls.push(['badge', options]); },
+      setTitle: options => { calls.push(['title', options]); }
     },
     contextMenus: {
       onClicked: { addListener: fn => { listeners.context = fn; } },
@@ -69,16 +74,21 @@ async function main() {
   };
 
   {
-    const env = extensionMock({ ok: true, result: 'queued' });
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: false } : { ok: true, result: 'queued' });
     env.setItem(mediafireItem);
     env.listeners.download(mediafireItem);
     await settle();
     assert.deepEqual(env.calls.filter(x => ['pause','cancel','erase'].includes(x[0])).map(x => x[0]), ['pause', 'cancel', 'erase']);
-    const native = env.calls.find(x => x[0] === 'native');
+    assert.equal(env.calls[0][0], 'pause', 'Pause Chrome before native or storage checks');
+    const native = env.calls.find(x => x[0] === 'native' && x[2].type === 'enqueue');
     assert.equal(native[2].url, mediafireItem.url);
     assert.equal(native[2].suggestedName, 'archivo.zip');
     assert.equal(native[2].referrer, mediafireItem.referrer);
     assert.equal(native[2].type, 'enqueue');
+    assert.equal(native[2].browserOwned, true);
+    assert.deepEqual(env.calls.filter(x => x[0] === 'native').map(x => x[2].type), ['capture-state', 'enqueue', 'released']);
+    assert.equal(env.calls.filter(x => x[0] === 'native')[2][2].downloadId, 'queued');
     console.log('OK: MediaFire CDN download intercepted and queued');
   }
   {
@@ -86,8 +96,31 @@ async function main() {
     env.setItem(mediafireItem);
     env.listeners.download(mediafireItem);
     await settle();
-    assert.deepEqual(env.calls.filter(x => ['pause','resume','cancel'].includes(x[0])).map(x => x[0]), ['pause', 'resume']);
-    console.log('OK: failed native host resumes Chrome download');
+    assert.deepEqual(env.calls.filter(x => ['pause','resume','cancel'].includes(x[0])).map(x => x[0]), ['pause','resume'], 'Host failure resumes Chrome');
+    console.log('OK: failed native host leaves Chrome in control');
+  }
+  {
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: false } : { ok: true, result: 'reserved-id' });
+    env.setItem(mediafireItem);
+    env.chrome.downloads.cancel = async id => { env.calls.push(['cancel-failed', id]); throw new Error('Chrome cancel rejected'); };
+    env.listeners.download(mediafireItem);
+    await settle();
+    assert.deepEqual(env.calls.filter(x => x[0] === 'native').map(x => x[2].type), ['capture-state', 'enqueue', 'abandon']);
+    assert.deepEqual(env.calls.filter(x => ['pause', 'resume'].includes(x[0])).map(x => x[0]), ['pause', 'resume']);
+    assert.ok(!env.calls.some(x => x[0] === 'erase'));
+    console.log('OK: cancel failure abandons OIDM record and resumes Chrome safely');
+  }
+  {
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: false } : { ok: true, result: 'queued' });
+    env.setItem(mediafireItem);
+    env.chrome.storage.local.get = async () => ({ automaticInterception: false });
+    env.listeners.download(mediafireItem);
+    await settle();
+    assert.deepEqual(env.calls.filter(x => ['pause','resume'].includes(x[0])).map(x => x[0]), ['pause','resume'], 'Disabled detection resumes Chrome');
+    assert.equal(env.calls.filter(x => x[0] === 'native').length, 1);
+    console.log('OK: interception disabled, Chrome retains the download');
   }
   {
     const env = extensionMock({ ok: true });
@@ -95,7 +128,7 @@ async function main() {
     env.chrome.downloads.pause = async () => { throw new Error('already complete'); };
     env.listeners.download(mediafireItem);
     await settle();
-    assert.ok(!env.calls.some(x => x[0] === 'native'));
+    assert.ok(!env.calls.some(x => x[0] === 'native' && x[2].type === 'enqueue'));
     console.log('OK: non-pausable download remains with Chrome');
   }
   {
@@ -108,13 +141,36 @@ async function main() {
     console.log('OK: non-HTTP downloads skipped');
   }
   {
-    const env = extensionMock({ ok: true, result: 'OIDM conectado' });
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: true } : { ok: true });
+    env.setItem(mediafireItem);
+    env.listeners.download(mediafireItem);
+    await settle();
+    assert.deepEqual(env.calls.filter(x => ['pause', 'resume', 'cancel', 'erase'].includes(x[0])).map(x => x[0]), ['pause', 'resume']);
+    assert.deepEqual(env.calls.filter(x => x[0] === 'native').map(x => x[2].type), ['capture-state']);
+    console.log('OK: paused OIDM immediately returns control to Chrome');
+  }
+  {
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: false } : { ok: true, paused: true });
     env.listeners.action();
     await settle();
-    assert.equal(env.calls.find(x => x[0] === 'native')[2].type, 'ping');
-    assert.ok(env.calls.some(x => x[0] === 'badge' && x[1].text === 'OK'));
-    console.log('OK: icon tests native connection');
+    assert.deepEqual(env.calls.filter(x => x[0] === 'native').map(x => x[2].type),
+      ['capture-state', 'set-capture']);
+    assert.equal(env.calls.find(x => x[0] === 'native' && x[2].type === 'set-capture')[2].paused, true);
+    assert.ok(env.calls.some(x => x[0] === 'badge' && x[1].text === 'OFF'));
+    console.log('OK: extension icon pauses capture');
   }
+  {
+    const env = extensionMock(req => req.type === 'capture-state'
+      ? { ok: true, paused: true } : { ok: true, paused: false });
+    env.listeners.action();
+    await settle();
+    assert.equal(env.calls.find(x => x[0] === 'native' && x[2].type === 'set-capture')[2].paused, false);
+    assert.ok(env.calls.some(x => x[0] === 'badge' && x[1].text === 'ON'));
+    console.log('OK: extension icon resumes capture');
+  }
+
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

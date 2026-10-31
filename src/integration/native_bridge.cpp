@@ -7,6 +7,7 @@
 #include <QLocalSocket>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QSettings>
 
 namespace oidm {
 namespace {
@@ -103,8 +104,27 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
         socket->disconnectFromServer();
         return;
     }
-    if (data.value(QStringLiteral("type")).toString() != QStringLiteral("enqueue")) {
+    const QString type = data.value(QStringLiteral("type")).toString();
+    if (type == QStringLiteral("released") || type == QStringLiteral("abandon")) {
+        const QString downloadId = data.value(QStringLiteral("downloadId")).toString();
+        if (downloadId.isEmpty() || downloadId.size() > 80) {
+            socket->write(response(false, requestId, QStringLiteral("ID de descarga inválido.")));
+            socket->flush();
+            socket->disconnectFromServer();
+            return;
+        }
+        if (type == QStringLiteral("released")) emit browserTransferReleased(downloadId, requestId, socket);
+        else emit browserTransferAbandoned(downloadId, requestId, socket);
+        return;
+    }
+    if (type != QStringLiteral("enqueue")) {
         socket->write(response(false, requestId, QStringLiteral("Solicitud no válida.")));
+        socket->flush();
+        socket->disconnectFromServer();
+        return;
+    }
+    if (QSettings().value(QStringLiteral("browser/capturePaused"), false).toBool()) {
+        socket->write(response(false, requestId, QStringLiteral("La captura de OIDM está pausada. Chrome descargará normalmente.")));
         socket->flush();
         socket->disconnectFromServer();
         return;
@@ -122,7 +142,10 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
     }
     // The desktop application selects the destination. Browser-supplied paths
     // are intentionally unsupported: the extension cannot write arbitrary files.
-    emit enqueueRequested(url, suggestedName, referrer, requestId, socket);
+    const qint64 totalBytes = data.value(QStringLiteral("totalBytes")).toVariant().toLongLong();
+    const bool browserOwned = data.value(QStringLiteral("browserOwned")).toBool(false);
+    emit enqueueRequested(url, suggestedName, referrer,
+        qBound<qint64>(-1, totalBytes, 1LL << 55), browserOwned, requestId, socket);
 }
 
 } // namespace oidm

@@ -17,13 +17,14 @@ namespace oidm {
 
 class DownloadRepository;
 class DownloadProgressDialog;
+class DownloadOfferDialog;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(DownloadRepository *repository, QWidget *parent = nullptr);
     [[nodiscard]] bool enqueueFromBrowser(const QString &url, const QString &suggestedName, const QString &referrer,
-                                          QString *id, QString *error);
+                                          qint64 totalBytes, bool browserOwned, QString *id, QString *error);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -35,6 +36,8 @@ public slots:
     void openBrowserSetup();
 private slots:
     void showSelectedDetails();
+    void openSettings();
+    void toggleBrowserCapture();
     void startSelected();
     void startQueue();
     void pauseSelected();
@@ -46,6 +49,11 @@ private:
     [[nodiscard]] QString selectedDownloadId() const;
     void selectAndRevealDownload(const QString &id);
     void showDetails(const Download &download);
+    void showOffer(const Download &download);
+    [[nodiscard]] bool beginOfferedDownload(const QString &id, const QString &destination);
+public:
+    [[nodiscard]] bool browserTransferReleased(const QString &id);
+    [[nodiscard]] bool browserTransferAbandoned(const QString &id);
     void createActions();
     void createMenusAndToolbar();
     void createCentralLayout();
@@ -56,8 +64,10 @@ private:
     DownloadTableModel *m_model = nullptr;
     QSortFilterProxyModel *m_categoryModel = nullptr;
     QHash<QString, QPointer<DownloadProgressDialog>> m_details;
+    QHash<QString, QPointer<DownloadOfferDialog>> m_offers;
     QTableView *m_table = nullptr;
     QTreeWidget *m_categories = nullptr;
+    QAction *m_captureAction = nullptr;
     QAction *m_addAction = nullptr;
     QAction *m_startAction = nullptr;
     QAction *m_startQueueAction = nullptr;

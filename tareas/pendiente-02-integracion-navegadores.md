@@ -57,3 +57,16 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Desinstalación validada en Wine: eliminó archivos y registro HKCU del host instalado, manteniendo datos/historial. Rehúsa borrar registros ajenos de otras instalaciones.
 - Chrome/Edge impiden la instalación oculta de extensiones locales en Windows. La activación manual *Cargar descomprimida* es requerida hasta publicación y aprobación en Chrome Web Store / Edge Add-ons; no se fuerza política empresarial ni se escribe en el perfil del navegador.
 - Validación: pruebas Qt y compilación cruzada Windows satisfactorias; instalador y desinstalador probados en Wine, incluida verificación de archivos, registro y prueba de interfaz. Falta validación interactiva con Chrome real en Windows.
+
+## Corrección de duplicados (31-oct-2026, beta 0.4.0)
+
+- `downloads.onCreated` pausa inmediatamente, sin consultas previas a preferencias. `enqueue(browserOwned=true)` reserva un registro OIDM sin iniciarlo. Solo al confirmar `chrome.downloads.cancel()` y borrar su entrada la extensión envía `released(id)` y se abre ventana Iniciar/Cancelar. En caso de fallo se usa `abandon(id)` y Chrome reanuda.
+- La ventana previa ofrece archivo/URL/tamaño anunciado/Tipo/carpeta, botones Iniciar y Cancelar; HEAD asíncrona para metadatos cuando se desconoce el tamaño.
+- Menú Opciones con General, Conexiones (6 por defecto, 1..32), Descargas (carpeta predeterminada) y Navegadores.
+- Limitaciones documentadas: Chrome ya comenzó a transferir cuando `onCreated` se dispara; archivo demasiado pequeño o transferencia no pausada se deja al navegador, sin crear duplicados.
+
+## Intercepción pausada (31-oct-2026)
+
+- Control **Pausar capturas** en OIDM y alternancia **OFF/ON** desde el icono de la extensión. Estado persistente compartido en QSettings; el host nativo lo lee/escribe sin lanzar la app.
+- La extensión pausa provisionalmente la descarga y consulta el estado: cuando OIDM está pausado o no hay host accesible, reanuda la transferencia de Chrome; al cambiar durante la operación el receptor rechaza nuevos `enqueue`.
+- Descargas existentes en OIDM no se pausan. Tests Node confirman pausa, reanudación, fallo de host y recuperación ante error de cancelación del navegador.

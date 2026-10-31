@@ -34,3 +34,11 @@ Descarga y ejecuta `OIDM-Windows-x64-v0.3.0-Setup.exe` con tu cuenta normal de W
 En el asistente de OIDM pulsa **Preparar y comprobar conexión**, después **Abrir Chrome** o **Abrir Edge**, habilita el modo de desarrollador y usa **Cargar descomprimida** para seleccionar la carpeta de extensión que OIDM abre o copia automáticamente al portapapeles. Es el único paso manual requerido por las restricciones de las extensiones no publicadas en Chrome Web Store / Microsoft Edge Add-ons. Al hacer clic en el icono de la extensión instalada debería responder **OIDM conectado**.
 
 Si necesitas abrir de nuevo el asistente: **Ayuda → Instalar / conectar extensión Chrome y Edge**. Para instalar con un único clic desde la tienda, primero habría que publicar allí la extensión, algo que requiere una cuenta de desarrollador y aprobación de la tienda.
+
+## Pausar temporalmente las capturas
+
+**En OIDM:** pulsa **Pausar capturas** en la barra o en Herramientas. Activado significa que Chrome/Edge descarga sus archivos por sí mismo. Desmárcalo para volver a interceptar.
+
+**En Chrome/Edge:** haz clic en el icono de la extensión: la insignia **OFF** indica capturas pausadas y **ON** indica capturas activas. Al cambiarlo desde la extensión, OIDM leerá el mismo estado guardado. Puedes cerrar OIDM; la pausa se mantiene al volver a abrirlo. Las descargas de OIDM iniciadas antes de pulsar OFF no se detienen.
+
+Si Chrome no logra comunicarse con el host nativo, la transferencia no se interrumpe y se mantiene en Chrome.

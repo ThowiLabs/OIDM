@@ -21,6 +21,7 @@ public:
     [[nodiscard]] QVector<Download> all(QString *error = nullptr) const;
     [[nodiscard]] bool insert(const Download &download, QString *error = nullptr);
     [[nodiscard]] bool update(const Download &download, QString *error = nullptr);
+    [[nodiscard]] bool updateQueuedDestination(const QString &id, const QString &destination, QString *error = nullptr);
     [[nodiscard]] bool remove(const QString &id, QString *error = nullptr);
     [[nodiscard]] bool recoverInterrupted(QString *error = nullptr);
 

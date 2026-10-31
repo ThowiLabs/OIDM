@@ -5,6 +5,8 @@
 #include "ui/progress_delegate.h"
 #include "ui/download_progress_dialog.h"
 #include "ui/browser_setup_dialog.h"
+#include "ui/settings_dialog.h"
+#include "ui/download_offer_dialog.h"
 #include "integration/browser_extension_id.h"
 
 #include <QAction>
@@ -28,6 +30,7 @@
 #include <QTimer>
 #include <QIcon>
 #include <QApplication>
+#include <QSettings>
 #include <QSplitter>
 #include <QFileIconProvider>
 #include <QMenu>
@@ -124,6 +127,12 @@ void MainWindow::createActions()
     m_cancelAction = new QAction(style()->standardIcon(QStyle::SP_DialogCancelButton), tr("Cancelar"), this);
     connect(m_cancelAction, &QAction::triggered, this, &MainWindow::cancelSelected);
 
+    m_captureAction = new QAction(tr("Pausar capturas"), this);
+    m_captureAction->setObjectName(QStringLiteral("browserCapturePaused"));
+    m_captureAction->setCheckable(true);
+    m_captureAction->setChecked(QSettings().value(QStringLiteral("browser/capturePaused"), false).toBool());
+    connect(m_captureAction, &QAction::triggered, this, &MainWindow::toggleBrowserCapture);
+
     m_removeAction = new QAction(style()->standardIcon(QStyle::SP_TrashIcon), tr("Eliminar"), this);
     m_removeAction->setShortcut(QKeySequence::Delete);
     connect(m_removeAction, &QAction::triggered, this, &MainWindow::removeSelected);
@@ -140,6 +149,8 @@ void MainWindow::createMenusAndToolbar()
     downloadsMenu->addActions({m_addAction, m_startAction, m_startQueueAction, m_pauseAction, m_cancelAction});
     downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_removeAction);
+    downloadsMenu->addSeparator();
+    downloadsMenu->addAction(m_captureAction);
     downloadsMenu->addAction(tr("Mostrar detalles"), this, &MainWindow::showSelectedDetails);
     QMenu *viewMenu = menuBar()->addMenu(tr("Ver"));
     viewMenu->addAction(tr("Todas las descargas"), this, [this] {
@@ -147,11 +158,13 @@ void MainWindow::createMenusAndToolbar()
     });
     QMenu *toolsMenu = menuBar()->addMenu(tr("Herramientas"));
     toolsMenu->addAction(tr("Iniciar cola"), m_manager, &DownloadManager::startQueued);
+    toolsMenu->addAction(m_captureAction);
     QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
     helpMenu->addAction(tr("Instalar / conectar extensión Chrome y Edge..."), this,
                         &MainWindow::openBrowserSetup);
     helpMenu->addAction(tr("Reparar integración Chrome / Edge..."), this,
                         &MainWindow::repairBrowserIntegration);
+    toolsMenu->addAction(tr("Opciones / conexiones..."), this, &MainWindow::openSettings);
     helpMenu->addAction(tr("Acerca de OIDM"), this, [this] {
         QMessageBox::about(this, tr("OIDM"), tr("Open Internet Download Manager\n"
             "Versión %1 · ThowiLabs\nC++20 · Qt 6 · Código abierto\n"
@@ -177,13 +190,14 @@ void MainWindow::createMenusAndToolbar()
     toolbar->addAction(m_cancelAction);
     toolbar->addAction(m_removeAction);
     toolbar->addSeparator();
+    toolbar->addAction(m_captureAction);
+    toolbar->addSeparator();
     auto *details = toolbar->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("Detalles"),
                                       this, &MainWindow::showSelectedDetails);
     details->setObjectName(QStringLiteral("detailsAction"));
     toolbar->addSeparator();
-    toolbar->addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("Opciones"), this, [this] {
-        QMessageBox::information(this, tr("Opciones"), tr("La configuración avanzada estará disponible próximamente."));
-    });
+    toolbar->addAction(style()->standardIcon(QStyle::SP_DialogApplyButton), tr("Opciones"),
+                       this, &MainWindow::openSettings);
 }
 
 void MainWindow::createCentralLayout()
@@ -373,6 +387,126 @@ void MainWindow::showDetails(const Download &download)
     dialog->activateWindow();
 }
 
+void MainWindow::toggleBrowserCapture()
+{
+    QSettings settings;
+    settings.sync();
+    const bool nextPaused = !settings.value(QStringLiteral("browser/capturePaused"), false).toBool();
+    settings.setValue(QStringLiteral("browser/capturePaused"), nextPaused);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        m_captureAction->setChecked(!nextPaused);
+        statusBar()->showMessage(tr("No se pudo guardar el estado de capturas."), 9000);
+        return;
+    }
+    m_captureAction->setChecked(nextPaused);
+    statusBar()->showMessage(nextPaused
+        ? tr("Captura PAUSADA: Chrome/Edge descarga normalmente.")
+        : tr("Captura ACTIVA: OIDM recibirá nuevas descargas."), 9000);
+}
+
+void MainWindow::openSettings()
+{
+    SettingsDialog dialog(this);
+    dialog.exec();
+}
+
+void MainWindow::showOffer(const Download &download)
+{
+    if (m_offers.value(download.id)) {
+        m_offers.value(download.id)->raise();
+        return;
+    }
+    auto *dialog = new DownloadOfferDialog(download, this);
+    m_offers.insert(download.id, dialog);
+    connect(dialog, &DownloadOfferDialog::startRequested, this,
+        [this, id = download.id, dialog](const QString &destination) {
+            if (beginOfferedDownload(id, destination)) dialog->accept();
+        });
+    connect(dialog, &QDialog::rejected, this, [this, id = download.id] {
+        QString error;
+        if (m_manager->remove(id, &error)) m_model->remove(id);
+        else statusBar()->showMessage(tr("No se pudo cancelar: %1").arg(error), 8000);
+    });
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+bool MainWindow::browserTransferReleased(const QString &id)
+{
+    if (!m_repository) return false;
+    const QVector<Download> records = m_repository->all();
+    for (const Download &item : records) {
+        if (item.id != id || item.status != DownloadStatus::Queued) continue;
+        selectAndRevealDownload(id);
+        showOffer(item);
+        return true;
+    }
+    return false;
+}
+
+bool MainWindow::browserTransferAbandoned(const QString &id)
+{
+    if (m_offers.value(id)) return false;
+    if (!m_repository) return false;
+    const QVector<Download> records = m_repository->all();
+    for (const Download &item : records) {
+        if (item.id != id || item.status != DownloadStatus::Queued) continue;
+        QString error;
+        if (!m_manager->remove(id, &error)) return false;
+        m_model->remove(id);
+        statusBar()->showMessage(tr("Descarga devuelta al navegador."), 5000);
+        return true;
+    }
+    return false;
+}
+
+bool MainWindow::beginOfferedDownload(const QString &id, const QString &destination)
+{
+    QString error;
+    const QFileInfo pathInfo(destination);
+    if (destination.isEmpty() || pathInfo.fileName().isEmpty()
+        || QFileInfo::exists(destination) || pathInfo.isSymLink()
+        || QFileInfo::exists(destination + QStringLiteral(".oidm-part"))
+        || QFileInfo::exists(destination + QStringLiteral(".oidm-parts"))
+        || !QDir().mkpath(pathInfo.absolutePath())) {
+        QMessageBox::warning(this, tr("Destino no disponible"),
+            tr("Elige un destino válido y libre. La descarga quedará en cola para corregirlo."));
+        return false;
+    }
+    auto downloads = m_repository->all(&error);
+    if (!error.isEmpty()) {
+        statusBar()->showMessage(error, 8000);
+        return false;
+    }
+    for (const Download &item : downloads) {
+        if (item.id != id && item.destination.compare(destination, Qt::CaseInsensitive) == 0) {
+            QMessageBox::warning(this, tr("Destino ocupado"),
+                tr("Otra descarga ya utiliza ese nombre. Elige otro."));
+            return false;
+        }
+    }
+    if (!m_repository->updateQueuedDestination(id, destination, &error)) {
+        statusBar()->showMessage(error, 8000);
+        return false;
+    }
+    for (Download &item : downloads) {
+        if (item.id != id) continue;
+        item.destination = destination;
+        item.fileName = QFileInfo(destination).fileName();
+        m_model->upsert(item);
+        selectAndRevealDownload(id);
+        showDetails(item);
+        break;
+    }
+    if (!m_manager->start(id, &error)) {
+        statusBar()->showMessage(error, 8000);
+        return false;
+    }
+    return true;
+}
+
 void MainWindow::showSelectedDetails()
 {
     const QString id = selectedDownloadId();
@@ -392,7 +526,7 @@ QString MainWindow::selectedDownloadId() const
 }
 
 bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &suggestedName,
-                                    const QString &referrer, QString *id, QString *error)
+                                    const QString &referrer, qint64 totalBytes, bool browserOwned, QString *id, QString *error)
 {
     const QUrl url(urlText);
     if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty()
@@ -413,7 +547,7 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
         QStringLiteral("NUL"), QStringLiteral("COM1"), QStringLiteral("COM2"), QStringLiteral("LPT1")};
     if (reserved.contains(basename)) name.prepend(QLatin1Char('_'));
 
-    QString folder = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QString folder = SettingsDialog::defaultDownloadDirectory();
     if (folder.isEmpty()) folder = QDir::homePath();
     if (!QDir().mkpath(folder)) {
         if (error) *error = tr("No se pudo crear la carpeta de descargas.");
@@ -452,19 +586,15 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
     download.destination = destination;
     download.fileName = QFileInfo(destination).fileName();
     download.status = DownloadStatus::Queued;
+    download.totalBytes = totalBytes > 0 ? totalBytes : -1;
     download.createdAt = QDateTime::currentDateTimeUtc();
     download.updatedAt = download.createdAt;
     if (!m_repository || !m_repository->insert(download, error)) return false;
     m_model->upsert(download);
     selectAndRevealDownload(download.id);
-    showDetails(download);
+    if (!browserOwned) showOffer(download);
     if (id) *id = download.id;
-    QString ignored;
-    if (!m_manager->start(download.id, &ignored)) {
-        statusBar()->showMessage(tr("Descarga guardada, pendiente de inicio: %1").arg(ignored), 8000);
-    } else {
-        statusBar()->showMessage(tr("Descarga recibida desde el navegador: %1").arg(download.fileName), 7000);
-    }
+    statusBar()->showMessage(tr("Descarga preparada: confirma Iniciar o Cancelar."), 8000);
     return true;
 }
 
@@ -545,7 +675,8 @@ void MainWindow::addDownload()
     }
     m_model->upsert(download);
     selectAndRevealDownload(download.id);
-    statusBar()->showMessage(tr("Descarga agregada a la cola"), 4000);
+    showOffer(download);
+    statusBar()->showMessage(tr("Descarga agregada. Confirma Iniciar o Cancelar."), 4000);
 }
 
 void MainWindow::startSelected()

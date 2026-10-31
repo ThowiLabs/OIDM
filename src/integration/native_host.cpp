@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QDebug>
 
 #include <array>
@@ -295,7 +296,19 @@ int unregisterChromiumHost() {
 
 QJsonObject forwardToApp(const QJsonObject &message) {
     const QString type = message.value(QStringLiteral("type")).toString();
-    if (type != QStringLiteral("enqueue") && type != QStringLiteral("ping")) {
+    if (type == QStringLiteral("capture-state") || type == QStringLiteral("set-capture")) {
+        QSettings settings;
+        if (type == QStringLiteral("set-capture")) {
+            if (!message.value(QStringLiteral("paused")).isBool()) return failure(QStringLiteral("Estado de pausa inválido."));
+            settings.setValue(QStringLiteral("browser/capturePaused"), message.value(QStringLiteral("paused")).toBool());
+            settings.sync();
+            if (settings.status() != QSettings::NoError) return failure(QStringLiteral("No se pudo guardar el estado."));
+        }
+        return QJsonObject{{QStringLiteral("ok"), true},
+            {QStringLiteral("paused"), settings.value(QStringLiteral("browser/capturePaused"), false).toBool()}};
+    }
+    if (type != QStringLiteral("enqueue") && type != QStringLiteral("ping")
+        && type != QStringLiteral("released") && type != QStringLiteral("abandon")) {
         return failure(QStringLiteral("Operación no admitida."));
     }
     QLocalSocket socket;

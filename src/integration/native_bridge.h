@@ -22,7 +22,10 @@ public:
 signals:
     void activationRequested();
     void enqueueRequested(const QString &url, const QString &suggestedName,
-                          const QString &referrer, const QString &requestId, QObject *replyTarget);
+                          const QString &referrer, qint64 totalBytes, bool browserOwned,
+                          const QString &requestId, QObject *replyTarget);
+    void browserTransferReleased(const QString &id, const QString &requestId, QObject *replyTarget);
+    void browserTransferAbandoned(const QString &id, const QString &requestId, QObject *replyTarget);
 
 private:
     void onConnected();

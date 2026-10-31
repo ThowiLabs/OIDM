@@ -156,6 +156,24 @@ bool DownloadRepository::update(const Download &item, QString *error) {
     return true;
 }
 
+bool DownloadRepository::updateQueuedDestination(const QString &id, const QString &destination, QString *error) {
+    QSqlQuery query(m_database);
+    query.prepare(QStringLiteral("UPDATE downloads SET destination=:destination,file_name=:name "
+        "WHERE id=:id AND status='queued'"));
+    query.bindValue(QStringLiteral(":destination"), destination);
+    query.bindValue(QStringLiteral(":name"), QFileInfo(destination).fileName());
+    query.bindValue(QStringLiteral(":id"), id);
+    if (!query.exec()) {
+        setError(error, query.lastError().text());
+        return false;
+    }
+    if (query.numRowsAffected() != 1) {
+        setError(error, QStringLiteral("Esta descarga ya no está pendiente de inicio."));
+        return false;
+    }
+    return true;
+}
+
 bool DownloadRepository::remove(const QString &id, QString *error) {
     QSqlQuery query(m_database);
     query.prepare(QStringLiteral("DELETE FROM downloads WHERE id=:id"));

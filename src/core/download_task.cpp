@@ -10,6 +10,7 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSettings>
 #include <QTemporaryFile>
 #include <QUrl>
 
@@ -20,8 +21,8 @@ namespace oidm {
 namespace {
 
 constexpr qint64 kMinimumParallelBytes = 4LL * 1024LL * 1024LL;
-constexpr qint64 kTargetSegmentBytes = 1LL * 1024LL * 1024LL;
-constexpr int kMaximumSegments = 8;
+constexpr qint64 kMinimumSegmentBytes = 256LL * 1024LL;
+constexpr int kMaximumSegments = 32;
 constexpr qint64 kProgressIntervalMs = 180;
 constexpr qint64 kManifestIntervalMs = 1000;
 constexpr qint64 kCopyBufferBytes = 256LL * 1024LL;
@@ -335,9 +336,11 @@ void DownloadTask::onProbeFinished()
 
 int DownloadTask::chooseSegmentCount(const qint64 totalBytes) const
 {
-    if (totalBytes < kMinimumParallelBytes) return 1;
-    const qint64 count = (totalBytes + kTargetSegmentBytes - 1) / kTargetSegmentBytes;
-    return static_cast<int>(std::clamp<qint64>(count, 2, kMaximumSegments));
+    const int configured = qBound(1, QSettings().value(QStringLiteral("transfer/maxConnections"), 6).toInt(), kMaximumSegments);
+    if (totalBytes < kMinimumParallelBytes || configured <= 1) return 1;
+    // Bounded by the amount of useful work per connection, not automatically
+    // inflated beyond the user's chosen limit.
+    return static_cast<int>(std::clamp<qint64>(totalBytes / kMinimumSegmentBytes, 1, configured));
 }
 
 bool DownloadTask::manifestMatchesProbe() const

@@ -88,3 +88,9 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Instalador real Windows NSIS por usuario, portable ZIP, registro host nativo HKCU y desinstalación conservadora que mantiene datos del usuario.
 - Chrome/Edge requieren confirmación explícita al cargar extensión sin publicar en Store. Queda pendiente publicación oficial para UX de instalación aún más simple.
 - Pruebas en Wine de instalación, registro, ejecuciones de smoke UI, desinstalación y preservación de datos correctas.
+
+## Beta OIDM 0.4.0 (31-oct-2026)
+
+- Descargas paralelas predeterminadas: 6 conexiones por archivo elegible, configurable entre 1 y 32 desde Opciones → Conexiones; se mantiene fallback para servidores sin Range/validador estable y archivos <4 MiB.
+- OIDM ahora espera autorización explícita mediante ventana de información de archivo con tamaño, tipo, destino, Iniciar y Cancelar. Ninguna transferencia de browserOwned empieza hasta handshake Chrome `pause → enqueue → cancel → released`.
+- Si cancelar descarga Chrome falla, Native Messaging `abandon` elimina registro OIDM y Chrome reanuda; extensión registra tests de estas situaciones.

@@ -94,12 +94,41 @@ chrome.contextMenus.onClicked.addListener((info) => {
   });
 });
 
-// Click the OIDM icon in Chrome/Edge to test the native bridge without downloading.
+// One click pauses/resumes all *new* browser captures. Existing OIDM transfers
+// continue, and Chrome never stops new transfers while capture is paused.
 chrome.action.onClicked.addListener(() => {
-  void sendNative({ type: "ping" }).then(response => {
-    showStatus(response.ok === true,
-      response.ok ? "Extensión y programa conectados correctamente." :
-        (response.error || "El programa OIDM o su host nativo no están registrados."));
+  void (async () => {
+    const state = await sendNative({ type: "capture-state" });
+    if (state.ok !== true) {
+      showStatus(false, state.error || "El host de OIDM no responde; Chrome mantiene sus descargas.");
+      return;
+    }
+    const nextPaused = state.paused !== true;
+    const result = await sendNative({ type: "set-capture", paused: nextPaused });
+    if (result.ok !== true) {
+      showStatus(false, result.error || "No se pudo cambiar el estado de capturas.");
+      return;
+    }
+    await chrome.storage.local.set({ capturePaused: nextPaused });
+    showCaptureBadge(nextPaused);
+    showStatus(true, nextPaused
+      ? "Capturas pausadas. Chrome/Edge descargará normalmente. Haz clic para reanudar OIDM."
+      : "Capturas activadas. OIDM interceptará nuevas descargas. Haz clic para pausar.");
+    showCaptureBadge(nextPaused);
+  })();
+});
+
+function showCaptureBadge(paused) {
+  chrome.action.setBadgeBackgroundColor({ color: paused ? "#b7791f" : "#18845d" });
+  chrome.action.setBadgeText({ text: paused ? "OFF" : "ON" });
+  chrome.action.setTitle({ title: paused
+    ? "OIDM pausado — Chrome descarga normalmente. Clic para activar."
+    : "OIDM activo — Clic para pausar capturas." });
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  void sendNative({ type: "capture-state" }).then(state => {
+    if (state.ok === true) showCaptureBadge(state.paused === true);
   });
 });
 
@@ -123,18 +152,29 @@ async function interceptDownload(item) {
   if (!eligibleDownload(item) || intercepting.has(item.id)) return;
   intercepting.add(item.id);
   let paused = false;
+  let preparedId = "";
   try {
-    const preferences = await chrome.storage.local.get({ automaticInterception: true });
-    if (preferences.automaticInterception === false) return;
-
-    // Do not create a second download if Chrome has already finished a small file.
+    // Pause immediately when Chrome notifies a new download. Native Messaging
+    // and settings reads are asynchronous and must not race the browser.
     try {
       await chrome.downloads.pause(item.id);
       paused = true;
     } catch {
+      return; // Already completed or not pausable: Chrome remains in control.
+    }
+    const capture = await sendNative({ type: "capture-state" });
+    if (capture.ok !== true || capture.paused === true) {
+      await resumeBrowserDownload(item.id);
+      paused = false;
+      if (capture.ok === true) showCaptureBadge(true);
       return;
     }
-
+    const preferences = await chrome.storage.local.get({ automaticInterception: true });
+    if (preferences.automaticInterception === false) {
+      await resumeBrowserDownload(item.id);
+      paused = false;
+      return;
+    }
     const matches = await chrome.downloads.search({ id: item.id });
     const current = matches?.[0] || item;
     if (current.state !== "in_progress") {
@@ -152,7 +192,9 @@ async function interceptDownload(item) {
       type: "enqueue",
       url,
       referrer: validUrl(current.referrer) ? current.referrer : "",
-      suggestedName: filenameFromDownload(current)
+      suggestedName: filenameFromDownload(current),
+      totalBytes: Number.isSafeInteger(current.totalBytes) && current.totalBytes > 0 ? current.totalBytes : -1,
+      browserOwned: true
     });
     if (response.ok !== true) {
       await resumeBrowserDownload(item.id);
@@ -161,14 +203,28 @@ async function interceptDownload(item) {
       return;
     }
 
-    // Transfer ownership only when OIDM ACKs successful queue insertion.
+    // OIDM has only prepared a Queued record, and MUST NOT start the transfer
+    // until Chrome has successfully cancelled its own download.
+    preparedId = String(response.result || "");
+    if (!preparedId) throw new Error("OIDM respondió sin ID de transferencia");
     await chrome.downloads.cancel(item.id);
-    paused = false;
+    paused = false; // Browser no longer owns the transfer.
     await chrome.downloads.erase({ id: item.id }).catch(() => {});
-    showStatus(true, "Descarga enviada automáticamente a OIDM.");
+    const released = await sendNative({ type: "released", downloadId: preparedId });
+    if (released.ok !== true) {
+      showStatus(false, "Chrome detuvo su descarga, pero OIDM no mostró la confirmación: " +
+        (released.error || "Sin respuesta") + ". Revisa la cola de OIDM.");
+      return;
+    }
+    showStatus(true, "Chrome canceló su transferencia. Confirma Iniciar en OIDM.");
   } catch (error) {
+    if (preparedId && paused) {
+      // Chrome is still the owner: discard the unstarted OIDM record BEFORE
+      // resuming. This avoids two simultaneously active downloads on failures.
+      await sendNative({ type: "abandon", downloadId: preparedId });
+    }
     if (paused) await resumeBrowserDownload(item.id);
-    showStatus(false, `Se mantuvo la descarga en Chrome: ${String(error)}`);
+    showStatus(false, `El navegador mantiene la descarga: ${String(error)}`);
   } finally {
     intercepting.delete(item.id);
   }
