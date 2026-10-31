@@ -5,7 +5,9 @@
 
 #if defined(Q_OS_WIN)
 #  define WIN32_LEAN_AND_MEAN
-#  define NOMINMAX
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
 #  include <windows.h>
 #elif defined(Q_OS_LINUX)
 #  include <cerrno>

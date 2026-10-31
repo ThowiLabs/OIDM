@@ -58,3 +58,16 @@ Build both executables and keep `oidm` and `oidm-native-host` in the same direct
 Restart the browser if needed, then use **Descargar con OIDM** from the context menu of a link. See [`extension/README.md`](extension/README.md) for platform-specific details. The native-host protocol has been exercised end-to-end with the Linux Qt desktop application, a local test HTTP server, and SQLite. The extension itself has not yet been verified through a real browser installation.
 
 **License:** GNU General Public License version 3; see `LICENSE`.
+
+## Portable Windows cross-build (experimental)
+
+The portable Windows x64 binary can also be cross-compiled from Linux with MinGW-w64 using the official Qt 6.8.3 `win64_mingw` SDK and Linux host Qt tools (`moc`, `uic`, `rcc`). These must be configured as host tools when CMake cross-compiles; Windows `.exe` tools cannot run on Linux. After building `oidm.exe` and `oidm-native-host.exe`, generate the runtime-complete ZIP with:
+
+```bash
+python3 scripts/package_windows_cross.py \
+  --qt /path/to/Qt/6.8.3/mingw_64 \
+  --build build-windows-cross \
+  --output dist
+```
+
+The packaging script verifies imported PE dependencies and includes the Qt Windows platform plugin, SQLite driver, Schannel TLS plugin, MinGW runtimes, and the Chromium extension. Native Windows compilation (MSVC) remains the preferred release workflow.
