@@ -23,23 +23,31 @@ DownloadOfferDialog::DownloadOfferDialog(const Download &download, QWidget *pare
     setObjectName(QStringLiteral("downloadOfferDialog"));
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(tr("Información del archivo — OIDM"));
-    setMinimumWidth(610);
-    resize(710, 320);
+    setMinimumWidth(575);
+    // Qt sizes this dialog to its content instead of reserving empty height.
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(20, 18, 20, 16);
-    layout->setSpacing(15);
+    layout->setSizeConstraint(QLayout::SetFixedSize);
+    layout->setContentsMargins(16, 12, 16, 12);
+    layout->setSpacing(8);
     auto *title = new QLabel(tr("Preparar descarga"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: bold; color: #d9eeff;"));
+    title->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold; color: #d9eeff;"));
     layout->addWidget(title);
 
     auto *form = new QFormLayout();
-    form->setVerticalSpacing(10);
+    form->setVerticalSpacing(5);
     auto *filename = new QLabel(download.fileName, this);
     filename->setObjectName(QStringLiteral("downloadOfferName"));
+    filename->setWordWrap(true);
+    filename->setMaximumWidth(470);
+    filename->setMaximumHeight(38);
+    filename->setToolTip(download.fileName);
     filename->setTextInteractionFlags(Qt::TextSelectableByMouse);
     auto *address = new QLabel(this);
     address->setText(download.url.toHtmlEscaped());
     address->setWordWrap(true);
+    address->setMaximumWidth(470);
+    address->setMaximumHeight(42);
+    address->setToolTip(download.url);
     address->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_size = new QLabel(download.totalBytes > 0 ? formatBytes(download.totalBytes) : tr("Consultando servidor…"), this);
     m_size->setObjectName(QStringLiteral("downloadOfferSize"));
@@ -63,8 +71,7 @@ DownloadOfferDialog::DownloadOfferDialog(const Download &download, QWidget *pare
     layout->addWidget(new QLabel(tr("Guardar como:"), this));
     layout->addLayout(destinationRow);
 
-    auto *note = new QLabel(tr("La descarga no comenzará hasta que pulses Iniciar descarga. "
-        "Si cancelas, OIDM descartará esta transferencia."), this);
+    auto *note = new QLabel(tr("La transferencia solo comienza al pulsar Iniciar descarga."), this);
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: #9eafc2;"));
     layout->addWidget(note);
@@ -79,6 +86,7 @@ DownloadOfferDialog::DownloadOfferDialog(const Download &download, QWidget *pare
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
     probeMetadata(download);
+    adjustSize();
 }
 
 QString DownloadOfferDialog::destination() const { return m_destination->text().trimmed(); }

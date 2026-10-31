@@ -35,6 +35,7 @@ public:
     enum class Behavior {
         FullResponse,
         RangeResponse,
+        RangeWithoutValidator,
         IgnoreRange,
         IgnoreSegmentRange,
         IgnoreResumeRange,
@@ -119,7 +120,7 @@ private:
         QByteArray result = "HTTP/1.1 " + QByteArray::number(status) + ' ' + reason + "\r\n";
         result += "Connection: close\r\n";
         result += "Content-Type: application/octet-stream\r\n";
-        result += "ETag: " + etag + "\r\n";
+        if (!etag.isEmpty()) result += "ETag: " + etag + "\r\n";
         result += headers;
         result += "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n";
         result += body;
@@ -164,11 +165,13 @@ private:
             break;
         }
         case Behavior::RangeResponse:
+        case Behavior::RangeWithoutValidator:
         case Behavior::WrongRange: {
             // A server supporting HTTP Range must still support ordinary
             // GET without a Range header (single-connection mode).
             if (offset < 0) {
-                output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body);
+                output = response(200, "OK", "Accept-Ranges: bytes\r\n", m_body,
+                    m_behavior == Behavior::RangeWithoutValidator ? QByteArray{} : QByteArrayLiteral("\"oidm-test-v1\""));
                 break;
             }
             if (offset >= m_body.size()) {
@@ -186,7 +189,8 @@ private:
             const QByteArray headers = "Accept-Ranges: bytes\r\nContent-Range: bytes "
                 + QByteArray::number(start) + '-' + QByteArray::number(end) + '/'
                 + QByteArray::number(m_body.size()) + "\r\n";
-            output = response(206, "Partial Content", headers, partial);
+            output = response(206, "Partial Content", headers, partial,
+                m_behavior == Behavior::RangeWithoutValidator ? QByteArray{} : QByteArrayLiteral("\"oidm-test-v1\""));
             break;
         }
         }
@@ -455,6 +459,50 @@ void DownloadTaskTests::configuredConnections()
         if (lower.contains("range: bytes=") && !lower.contains("range: bytes=0-0")) ++segmentRequests;
     }
     QCOMPARE(segmentRequests, connections == 1 ? 0 : connections);
+}
+
+void DownloadTaskTests::parallelWithoutEtags()
+{
+    // Public CDNs commonly return 206/Content-Range without ETag/Last-Modified.
+    // The first session must use six segments, but saved partial fragments are
+    // not trusted across a restart without a stable validator.
+    QSettings settings;
+    const QString key = QStringLiteral("transfer/maxConnections");
+    const bool hadValue = settings.contains(key);
+    const QVariant savedValue = settings.value(key);
+    const auto restore = qScopeGuard([hadValue, savedValue, key] {
+        QSettings preferences;
+        if (hadValue) preferences.setValue(key, savedValue);
+        else preferences.remove(key);
+    });
+    settings.remove(key);
+    settings.sync();
+
+    QByteArray body(6 * 1024 * 1024 + 701, Qt::Uninitialized);
+    for (qsizetype i = 0; i < body.size(); ++i)
+        body[i] = static_cast<char>((i * 29 + i / 191) % 251);
+    LocalHttpServer server(body, LocalHttpServer::Behavior::RangeWithoutValidator);
+    QVERIFY(server.listen());
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString destination = temporary.filePath(QStringLiteral("cdn-no-etag.bin"));
+    DownloadTask task(makeDownload(server.url(), destination));
+    QSignalSpy finished(&task, &DownloadTask::finished);
+    task.start();
+    QVERIFY2(finished.wait(20000), "Transfer without ETag did not finish");
+    const Download result = qvariant_cast<Download>(finished.takeFirst().at(0));
+    QVERIFY2(result.status == DownloadStatus::Completed, qPrintable(result.error));
+    QCOMPARE(readFile(destination), body);
+    QVERIFY(result.connectionInfo.contains(QStringLiteral("6 segmentos")));
+
+    int ranges = 0;
+    for (const QByteArray &request : server.requests()) {
+        const QByteArray lower = request.toLower();
+        if (lower.contains("range: bytes=") && !lower.contains("range: bytes=0-0")) ++ranges;
+    }
+    QCOMPARE(ranges, 6);
+    QVERIFY2(server.maxConcurrentConnections() >= 2, "Range transfers did not overlap");
+    QVERIFY(!QFileInfo::exists(destination + QStringLiteral(".oidm-parts")));
 }
 
 void DownloadTaskTests::fallsBackWhenSegmentRangeIsIgnored()

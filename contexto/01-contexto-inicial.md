@@ -94,3 +94,9 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Descargas paralelas predeterminadas: 6 conexiones por archivo elegible, configurable entre 1 y 32 desde Opciones → Conexiones; se mantiene fallback para servidores sin Range/validador estable y archivos <4 MiB.
 - OIDM ahora espera autorización explícita mediante ventana de información de archivo con tamaño, tipo, destino, Iniciar y Cancelar. Ninguna transferencia de browserOwned empieza hasta handshake Chrome `pause → enqueue → cancel → released`.
 - Si cancelar descarga Chrome falla, Native Messaging `abandon` elimina registro OIDM y Chrome reanuda; extensión registra tests de estas situaciones.
+
+## Beta OIDM 0.4.1 (31-oct-2026)
+
+- Soluciona fallback constante a 1 conexión de CDNs HTTP sin ETag/Last-Modified, mediante seis rangos simultáneos si responden `206`, `Content-Range` y tamaño válido.
+- Sigue prohibido reanudar fragmentos entre sesiones sin un validador del recurso; vista de progreso informa modo de conexiones. Umbral 768 KiB.
+- Pruebas C++ verifican transferencia sin ETag y solicitudes solapadas.

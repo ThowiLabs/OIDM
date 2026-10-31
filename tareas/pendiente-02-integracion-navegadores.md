@@ -70,3 +70,9 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Control **Pausar capturas** en OIDM y alternancia **OFF/ON** desde el icono de la extensión. Estado persistente compartido en QSettings; el host nativo lo lee/escribe sin lanzar la app.
 - La extensión pausa provisionalmente la descarga y consulta el estado: cuando OIDM está pausado o no hay host accesible, reanuda la transferencia de Chrome; al cambiar durante la operación el receptor rechaza nuevos `enqueue`.
 - Descargas existentes en OIDM no se pausan. Tests Node confirman pausa, reanudación, fallo de host y recuperación ante error de cancelación del navegador.
+
+## Corrección CDN sin validadores (31-oct-2026, v0.4.1)
+
+- Se elimina el requisito erróneo ETag / Last-Modified para iniciar seis rangos simultáneos dentro de una sesión. Se conserva el requisito para **reanudar fragmentos guardados** de otra sesión.
+- El tamaño mínimo para dividir es 768 KiB; la ventana de progreso indica motivo del fallback.
+- Prueba `parallelWithoutEtags`: seis respuestas `206` concurrentes sin validadores; reconstrucción exacta y limpieza.

@@ -37,11 +37,14 @@ private:
     QLabel *m_timeLabel{};
     QLabel *m_resumeLabel{};
     QLabel *m_connectionsLabel{};
+    QLabel *m_completionSummary{};
+    QTabWidget *m_tabs{};
     QProgressBar *m_progress{};
     QTableWidget *m_connections{};
     QPushButton *m_pauseButton{};
     QPushButton *m_resumeButton{};
     QPushButton *m_cancelButton{};
+    bool m_compactCompleted{false};
 };
 
 } // namespace oidm

@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QSettings>
 #include <QPushButton>
+#include <QLabel>
 #include <QSpinBox>
 #include <QTreeWidget>
 #include <QMessageBox>
@@ -59,6 +60,8 @@ int runUiSelfTest()
     auto *offer = window.findChild<DownloadOfferDialog *>(QStringLiteral("downloadOfferDialog"));
     if (!offer || !offer->findChild<QPushButton *>(QStringLiteral("downloadOfferStart"))
         || !offer->findChild<QPushButton *>(QStringLiteral("downloadOfferCancel"))) return 34;
+    QCoreApplication::processEvents();
+    if (offer->height() > 310) return 44; // compact confirmation, no blank vertical reserve
     SettingsDialog settings(&window);
     auto *connections = settings.findChild<QSpinBox *>(QStringLiteral("settingsMaxConnections"));
     if (!connections || connections->value() < 1 || connections->value() > 32) return 35;
@@ -91,6 +94,22 @@ int runUiSelfTest()
     if (afterStart.size() != 1 || afterStart.first().id != startedId
         || afterStart.first().status != DownloadStatus::Inspecting) return 42;
     if (window.findChildren<DownloadProgressDialog *>().isEmpty()) return 43;
+
+    // Verify that completion collapses an already opened progress window to
+    // a concise status and destination, not an empty 505px dialog.
+    Download sample = afterStart.first();
+    sample.status = DownloadStatus::Downloading;
+    sample.connectionPercents = {10, 25, 60, 75, 80, 95};
+    DownloadProgressDialog completed(sample, &window);
+    completed.show();
+    QCoreApplication::processEvents();
+    const int activeHeight = completed.height();
+    sample.status = DownloadStatus::Completed;
+    sample.downloadedBytes = 321;
+    completed.updateDownload(sample);
+    QCoreApplication::processEvents();
+    if (completed.height() > 270 || completed.height() >= activeHeight) return 45;
+    if (!completed.findChild<QLabel *>(QStringLiteral("downloadCompleteSummary"))->isVisible()) return 46;
     return 0;
 }
 

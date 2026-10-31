@@ -30,6 +30,7 @@ struct Download {
     QString contentType;
     QString error;
     QVector<int> connectionPercents; // ephemeral actual per-segment progress (not persisted)
+    QString connectionInfo; // explains automatic fallback without hiding the configured limit
     QDateTime createdAt;
     QDateTime updatedAt;
 

@@ -20,8 +20,8 @@
 namespace oidm {
 namespace {
 
-constexpr qint64 kMinimumParallelBytes = 4LL * 1024LL * 1024LL;
-constexpr qint64 kMinimumSegmentBytes = 256LL * 1024LL;
+constexpr qint64 kMinimumParallelBytes = 768LL * 1024LL;
+constexpr qint64 kMinimumSegmentBytes = 128LL * 1024LL;
 constexpr int kMaximumSegments = 32;
 constexpr qint64 kProgressIntervalMs = 180;
 constexpr qint64 kManifestIntervalMs = 1000;
@@ -164,6 +164,7 @@ void DownloadTask::start()
     loadExistingManifest();
     if (m_terminal) return;
 
+    m_download.connectionInfo = tr("Comprobando compatibilidad con conexiones paralelas…");
     m_download.status = DownloadStatus::Inspecting;
     m_download.downloadedBytes = 0;
     m_download.totalBytes = -1;
@@ -243,6 +244,7 @@ void DownloadTask::onProbeMetadataChanged()
     m_contentType = reply->header(QNetworkRequest::ContentTypeHeader).toString();
 
     if (statusCode == 200) {
+        m_download.connectionInfo = tr("Una conexión: el servidor ignoró Range y devolvió HTTP 200.");
         const QVariant length = reply->header(QNetworkRequest::ContentLengthHeader);
         m_totalBytes = length.isValid() ? length.toLongLong() : -1;
         m_fallbackRequested = true;
@@ -262,18 +264,14 @@ void DownloadTask::onProbeMetadataChanged()
     const bool validLength = !length.isValid() || length.toLongLong() == 1;
     const bool validRange = parseContentRange(contentRange, &range)
         && range.start == 0 && range.end == 0 && range.total > 0;
-    const bool hasStableValidator = !strongEtag(m_etag).isEmpty() || !m_lastModified.isEmpty();
     if (!validRange || !validLength) {
         fail(tr("El servidor devolvió una respuesta de rango inválida durante la comprobación."));
         reply->abort();
         return;
     }
-    if (!hasStableValidator) {
-        m_fallbackRequested = true;
-        reply->abort();
-        return;
-    }
-
+    // A validator is required to RESUME fragments across independent sessions,
+    // not to issue parallel ranges for a single live transfer. A public CDN may
+    // omit ETag/Last-Modified yet still honor Content-Range on every response.
     m_totalBytes = range.total;
     m_probeValidated = true;
 }
@@ -315,6 +313,10 @@ void DownloadTask::onProbeFinished()
         return;
     }
     if (m_fallbackRequested) {
+        if (m_download.connectionInfo.isEmpty()
+            || m_download.connectionInfo.startsWith(tr("Comprobando compatibilidad"))) {
+            m_download.connectionInfo = tr("Una conexión: el servidor no admitió la descarga por rangos.");
+        }
         m_fallbackRequested = false;
         startSingleStream(false);
         return;
@@ -368,13 +370,18 @@ bool DownloadTask::manifestMatchesProbe() const
 void DownloadTask::prepareSegments()
 {
     if (m_terminal) return;
-    if (m_totalBytes <= 0 || chooseSegmentCount(m_totalBytes) <= 1
-        || (strongEtag(m_etag).isEmpty() && m_lastModified.isEmpty())) {
+    if (m_totalBytes <= 0 || chooseSegmentCount(m_totalBytes) <= 1) {
+        m_download.connectionInfo = m_totalBytes <= 0
+            ? tr("Una conexión: el servidor no informó el tamaño del archivo.")
+            : tr("Una conexión: archivo pequeño o límite configurado en 1.");
         startSingleStream(true);
         return;
     }
 
     const int segmentCount = chooseSegmentCount(m_totalBytes);
+    m_download.connectionInfo = (strongEtag(m_etag).isEmpty() && m_lastModified.isEmpty())
+        ? tr("%1 segmentos HTTP; sin validador de versión, al reanudar se reiniciará.").arg(segmentCount)
+        : tr("%1 segmentos HTTP verificados con identificador de archivo.").arg(segmentCount);
     bool reuseManifest = m_savedManifest.value(QStringLiteral("mode")).toString() == QStringLiteral("segments")
         && manifestMatchesProbe();
     QDir().mkpath(segmentDirectory());
@@ -508,6 +515,10 @@ void DownloadTask::startSegment(const int index)
     const QByteArray range = QByteArrayLiteral("bytes=") + QByteArray::number(segment.requestStart)
         + QByteArrayLiteral("-") + QByteArray::number(segment.end);
     request.setRawHeader(QByteArrayLiteral("Range"), range);
+    // Use independent HTTP/1.1 sockets for segment requests. HTTP/2 otherwise
+    // multiplexes six streams on one TCP connection, which may be displayed as
+    // a single connection in OS monitors despite concurrent range requests.
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
     const QString validator = validatorForIfRange(m_etag, m_lastModified);
     if (!validator.isEmpty()) request.setRawHeader(QByteArrayLiteral("If-Range"), validator.toLatin1());
 

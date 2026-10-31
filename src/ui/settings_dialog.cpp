@@ -58,8 +58,9 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     connectionForm->addRow(tr("Conexiones por archivo:"), m_connections);
     connectionsLayout->addLayout(connectionForm);
     auto *connectionHint = new QLabel(tr("Valor inicial: 6. Se aplica a las próximas descargas. "
-        "Solo se abren múltiples conexiones si el servidor admite rangos HTTP y "
-        "permite verificar la identidad del archivo. Algunos servidores limitan la cantidad."), connections);
+        "OIDM inicia automáticamente los segmentos cuando el servidor admite rangos HTTP. "
+        "Si el servidor no admite rangos, se utiliza una conexión; "
+        "sin ETag/Last-Modified no se reutilizan fragmentos en otra sesión."), connections);
     connectionHint->setWordWrap(true);
     connectionsLayout->addWidget(connectionHint);
     connectionsLayout->addStretch();

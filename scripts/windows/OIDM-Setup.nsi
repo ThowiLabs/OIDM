@@ -10,7 +10,7 @@ Unicode true
 !endif
 
 !ifndef APP_VERSION
-  !define APP_VERSION "0.3.0"
+  !define APP_VERSION "0.4.1"
 !endif
 !ifndef OUTPUT_FILE
   !define OUTPUT_FILE "OIDM-Windows-x64-v${APP_VERSION}-Setup.exe"

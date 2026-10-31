@@ -6,6 +6,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QProgressBar>
+#include <QFileInfo>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -18,12 +19,11 @@ DownloadProgressDialog::DownloadProgressDialog(const Download &download, QWidget
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(download.fileName + tr(" — Detalles de descarga"));
-    setMinimumSize(560, 460);
-    resize(640, 505);
+    setMinimumWidth(530);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 14, 16, 14);
-    layout->setSpacing(12);
+    layout->setContentsMargins(14, 12, 14, 12);
+    layout->setSpacing(7);
 
     auto *header = new QLabel(download.fileName, this);
     header->setObjectName(QStringLiteral("transferHeading"));
@@ -31,12 +31,15 @@ DownloadProgressDialog::DownloadProgressDialog(const Download &download, QWidget
     layout->addWidget(header);
 
     auto *tabs = new QTabWidget(this);
+    m_tabs = tabs;
     auto *statusTab = new QWidget(tabs);
     auto *statusLayout = new QVBoxLayout(statusTab);
     auto *form = new QFormLayout();
-    form->setVerticalSpacing(9);
+    form->setVerticalSpacing(5);
     m_urlLabel = new QLabel(statusTab);
     m_urlLabel->setWordWrap(true);
+    m_urlLabel->setMaximumWidth(430);
+    m_urlLabel->setMaximumHeight(43);
     m_urlLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_statusLabel = new QLabel(statusTab);
     m_sizeLabel = new QLabel(statusTab);
@@ -69,7 +72,9 @@ DownloadProgressDialog::DownloadProgressDialog(const Download &download, QWidget
     m_connections->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_connections->setSelectionMode(QAbstractItemView::NoSelection);
     m_connections->setAlternatingRowColors(true);
-    statusLayout->addWidget(m_connections, 1);
+    m_connections->setMinimumHeight(88);
+    m_connections->setMaximumHeight(136);
+    statusLayout->addWidget(m_connections);
     tabs->addTab(statusTab, tr("Estado de descarga"));
 
     auto *limitsTab = new QWidget(tabs);
@@ -87,7 +92,15 @@ DownloadProgressDialog::DownloadProgressDialog(const Download &download, QWidget
     completionLayout->addWidget(completionNote);
     completionLayout->addStretch();
     tabs->addTab(completionTab, tr("Al finalizar"));
-    layout->addWidget(tabs, 1);
+    layout->addWidget(tabs);
+
+    m_completionSummary = new QLabel(this);
+    m_completionSummary->setObjectName(QStringLiteral("downloadCompleteSummary"));
+    m_completionSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_completionSummary->setWordWrap(true);
+    m_completionSummary->setMaximumWidth(530);
+    m_completionSummary->hide();
+    layout->addWidget(m_completionSummary);
 
     auto *buttons = new QHBoxLayout();
     m_pauseButton = new QPushButton(tr("Pausar"), this);
@@ -105,6 +118,7 @@ DownloadProgressDialog::DownloadProgressDialog(const Download &download, QWidget
     buttons->addWidget(closeButton);
     layout->addLayout(buttons);
     updateDownload(download);
+    adjustSize();
 }
 
 void DownloadProgressDialog::updateDownload(const Download &download)
@@ -127,8 +141,11 @@ void DownloadProgressDialog::updateDownload(const Download &download)
     }
     m_resumeLabel->setText(download.status == DownloadStatus::Paused ? tr("Disponible si el servidor admite rangos") : tr("Según compatibilidad del servidor"));
     const auto &segments = download.connectionPercents;
-    m_connectionsLabel->setText(segments.isEmpty() ? tr("Conexiones: comprobando servidor")
-        : tr("Conexiones utilizadas: %1").arg(segments.size()));
+    const QString connectionText = segments.isEmpty() ? tr("Conexiones: comprobando servidor")
+        : tr("Conexiones/segmentos usados: %1").arg(segments.size());
+    m_connectionsLabel->setText(download.connectionInfo.isEmpty() ? connectionText
+        : connectionText + QStringLiteral(" — ") + download.connectionInfo);
+    m_connectionsLabel->setWordWrap(true);
     m_connections->setRowCount(static_cast<int>(segments.size()));
     for (int i = 0; i < segments.size(); ++i) {
         auto *name = m_connections->item(i, 0);
@@ -142,6 +159,28 @@ void DownloadProgressDialog::updateDownload(const Download &download)
     m_pauseButton->setEnabled(active);
     m_resumeButton->setEnabled(download.status == DownloadStatus::Paused || download.status == DownloadStatus::Failed || download.status == DownloadStatus::Queued);
     m_cancelButton->setEnabled(download.status != DownloadStatus::Cancelled && download.status != DownloadStatus::Completed);
+
+    // After a successful transfer the segment table and tabs contain no
+    // actionable information. Collapse to a file/status summary and Close.
+    const bool completed = download.status == DownloadStatus::Completed;
+    if (completed) {
+        const QString destination = QFileInfo(download.destination).absoluteFilePath();
+        m_completionSummary->setText(tr("Descarga completada — %1\nGuardado en: %2")
+            .arg(formatBytes(download.downloadedBytes), destination));
+        m_completionSummary->setToolTip(destination);
+    }
+    if (completed != m_compactCompleted) {
+        m_compactCompleted = completed;
+        m_tabs->setVisible(!completed);
+        m_completionSummary->setVisible(completed);
+        m_pauseButton->setVisible(!completed);
+        m_resumeButton->setVisible(!completed);
+        m_cancelButton->setVisible(!completed);
+        layout()->activate();
+        // Do not retain the large in-progress window geometry on completion.
+        const QSize naturalSize = layout()->sizeHint();
+        resize(qMax(530, naturalSize.width()), naturalSize.height());
+    }
 }
 
 } // namespace oidm

@@ -8,6 +8,7 @@ private slots:
     void initTestCase();
     void downloadsFullResponse();
     void segmentedTransfersReassembleLargeFiles();
+    void parallelWithoutEtags();
     void configuredConnections_data();
     void configuredConnections();
     void fallsBackWhenSegmentRangeIsIgnored();
