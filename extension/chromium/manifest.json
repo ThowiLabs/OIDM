@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "OIDM — Open Download Manager",
-  "version": "0.1.0",
-  "description": "Envía enlaces de descarga a OIDM, el gestor de descargas abierto en C++ y Qt.",
+  "version": "0.1.1",
+  "description": "Captura descargas HTTP/HTTPS y envía las transferencias a OIDM (también MediaFire).",
   "permissions": [
     "contextMenus",
     "nativeMessaging",
-    "notifications"
+    "notifications",
+    "downloads",
+    "storage"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,5 +20,6 @@
     "16": "icons/oidm-16.png",
     "48": "icons/oidm-48.png",
     "128": "icons/oidm-128.png"
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAser4P2cM2lXlXKlKuumbu+dlyEoGFHqqWVlKf2opFoDYq+Z2cUl9BQbCPSZq/MPQigYsWwaW0vAMmDG+T6+W12QuiZezEj9TOYAfHJ8QMJleZimYePLdMKR9SEQOxvLQvU4Ulon6iC9xwvtlAabHYH3Vje/Cahb8ZdDovw+mLd4/SB79pl9EwcGFAQPDjNWbYpBuJf1GE+DMrcviWXLzZW1fClbnL8KBITGu28L76wvUvgp/YazhPB8iKqFzQm0VG1rYBXM3IrqvnBBbU53iA68LLXsLVkRp+y87d+sb3/lmLtX8Cl1WoKcEPimfTcNfR1UGp73hblirHsnmWF2KPwIDAQAB"
 }

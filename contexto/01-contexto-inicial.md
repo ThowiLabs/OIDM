@@ -70,3 +70,13 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Prueba Linux de extremo a extremo: mensaje binario JSON -> host -> aplicación Qt -> HTTP local -> archivo correcto -> SQLite completado.
 - Registro Linux para Chrome, Chromium y Edge probado en rutas de prueba aisladas.
 - Firefox, instalación Windows y prueba dentro de un navegador real todavía pendientes.
+
+## Parche de integración navegador (31-oct-2026)
+
+- Versión de extensión MV3 0.1.1, ID estable `ciipklijloaknncdmnlnnoimjfcllohi`.
+- `OIDM.exe` registra al iniciar su host Native Messaging en HKCU Windows para Chrome y Edge, sin privilegios de administrador.
+- Captura automática de descargas Chrome/Edge por `downloads.onCreated`; al aceptar OIDM, la extensión cancela la descarga de Chrome; si falla, la reanuda.
+- El icono de la extensión permite prueba `ping` y hay un `CONFIGURAR-INTEGRACION.cmd` para reparación manual.
+- Referrer HTTP/HTTPS validado y persistido en SQLite mediante migración de esquema, enviado como encabezado al descargar.
+- Integración real Windows bajo Wine probada de extremo a extremo: Native Messaging enqueue, app Qt, descarga a Downloads y propagación de Referer; no se verificó el sitio real MediaFire.
+- La extensión anterior era solo de menú contextual y sin registro automático; es imprescindible eliminarla y cargar la nueva incluida en el ZIP.

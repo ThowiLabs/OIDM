@@ -26,6 +26,7 @@ Download fromQuery(const QSqlQuery &query) {
     item.error = query.value(8).toString();
     item.createdAt = query.value(9).toDateTime();
     item.updatedAt = query.value(10).toDateTime();
+    item.referrer = query.value(11).toString();
     return item;
 }
 
@@ -65,6 +66,26 @@ DownloadRepository::DownloadRepository(const QString &databasePath)
             return;
         }
     }
+    // Optional referrer was introduced in 0.1.1. Existing download histories
+    // must remain valid on upgrades (SQLite does not support ADD COLUMN IF NOT EXISTS).
+    QSqlQuery columns(m_database);
+    if (!columns.exec(QStringLiteral("PRAGMA table_info(downloads)"))) {
+        m_lastError = columns.lastError().text();
+        m_database.close();
+        return;
+    }
+    bool hasReferrer = false;
+    while (columns.next()) {
+        if (columns.value(1).toString() == QStringLiteral("referrer")) {
+            hasReferrer = true;
+            break;
+        }
+    }
+    if (!hasReferrer && !query.exec(QStringLiteral("ALTER TABLE downloads ADD COLUMN referrer TEXT NOT NULL DEFAULT ''"))) {
+        m_lastError = query.lastError().text();
+        m_database.close();
+        return;
+    }
 }
 
 DownloadRepository::~DownloadRepository() {
@@ -82,7 +103,7 @@ QVector<Download> DownloadRepository::all(QString *error) const {
     QVector<Download> items;
     QSqlQuery query(m_database);
     if (!query.exec(QStringLiteral(
-        "SELECT id,url,destination,file_name,status,downloaded_bytes,total_bytes,content_type,error,created_at,updated_at "
+        "SELECT id,url,destination,file_name,status,downloaded_bytes,total_bytes,content_type,error,created_at,updated_at,referrer "
         "FROM downloads ORDER BY created_at DESC"))) {
         setError(error, query.lastError().text());
         return items;
@@ -94,10 +115,11 @@ QVector<Download> DownloadRepository::all(QString *error) const {
 bool DownloadRepository::insert(const Download &item, QString *error) {
     QSqlQuery query(m_database);
     query.prepare(QStringLiteral(
-        "INSERT INTO downloads(id,url,destination,file_name,status,downloaded_bytes,total_bytes,content_type,error,created_at,updated_at) "
-        "VALUES(:id,:url,:destination,:file_name,:status,:downloaded,:total,:type,:error,:created,:updated)"));
+        "INSERT INTO downloads(id,url,destination,file_name,status,downloaded_bytes,total_bytes,content_type,error,created_at,updated_at,referrer) "
+        "VALUES(:id,:url,:destination,:file_name,:status,:downloaded,:total,:type,:error,:created,:updated,:referrer)"));
     query.bindValue(QStringLiteral(":id"), item.id);
     query.bindValue(QStringLiteral(":url"), item.url);
+    query.bindValue(QStringLiteral(":referrer"), item.referrer.isEmpty() ? QStringLiteral("") : item.referrer);
     query.bindValue(QStringLiteral(":destination"), item.destination);
     query.bindValue(QStringLiteral(":file_name"), item.fileName);
     query.bindValue(QStringLiteral(":status"), statusKey(item.status));

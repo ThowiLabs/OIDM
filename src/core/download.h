@@ -19,6 +19,7 @@ enum class DownloadStatus {
 struct Download {
     QString id;
     QString url;
+    QString referrer;
     QString destination;
     QString fileName;
     DownloadStatus status{DownloadStatus::Queued};

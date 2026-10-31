@@ -184,7 +184,7 @@ QString MainWindow::selectedDownloadId() const
 }
 
 bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &suggestedName,
-                                    QString *id, QString *error)
+                                    const QString &referrer, QString *id, QString *error)
 {
     const QUrl url(urlText);
     if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty()
@@ -236,6 +236,11 @@ bool MainWindow::enqueueFromBrowser(const QString &urlText, const QString &sugge
     Download download;
     download.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     download.url = url.toString(QUrl::FullyEncoded);
+    const QUrl page(referrer);
+    if (page.isValid() && !page.host().isEmpty() && page.userInfo().isEmpty()
+        && (page.scheme() == QStringLiteral("http") || page.scheme() == QStringLiteral("https"))) {
+        download.referrer = page.toString(QUrl::FullyEncoded);
+    }
     download.destination = destination;
     download.fileName = QFileInfo(destination).fileName();
     download.status = DownloadStatus::Queued;

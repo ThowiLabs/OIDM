@@ -132,15 +132,18 @@ int registerChromiumHost(const QString &extensionId) {
 }
 
 QJsonObject forwardToApp(const QJsonObject &message) {
-    if (message.value(QStringLiteral("type")).toString() != QStringLiteral("enqueue")) {
+    const QString type = message.value(QStringLiteral("type")).toString();
+    if (type != QStringLiteral("enqueue") && type != QStringLiteral("ping")) {
         return failure(QStringLiteral("Operación no admitida."));
     }
     QLocalSocket socket;
     socket.connectToServer(oidm::nativeBridgeName(), QIODevice::ReadWrite);
     if (!socket.waitForConnected(250)) {
-        QString program = QCoreApplication::applicationDirPath() + QStringLiteral("/oidm");
+        QString program = QCoreApplication::applicationDirPath()
 #ifdef Q_OS_WIN
-        program += QStringLiteral(".exe");
+            + QStringLiteral("/OIDM.exe");
+#else
+            + QStringLiteral("/oidm");
 #endif
         if (!QFileInfo::exists(program) || !QProcess::startDetached(program, {})) {
             return failure(QStringLiteral("OIDM no está ejecutándose y no se pudo iniciar."));

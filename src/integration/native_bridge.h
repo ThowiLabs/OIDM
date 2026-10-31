@@ -21,7 +21,7 @@ public:
 
 signals:
     void enqueueRequested(const QString &url, const QString &suggestedName,
-                          const QString &requestId, QObject *replyTarget);
+                          const QString &referrer, const QString &requestId, QObject *replyTarget);
 
 private:
     void onConnected();

@@ -1,20 +1,25 @@
-# OIDM Browser Integration — preview
+# OIDM — Integración Chrome y Edge, versión 0.1.1
 
-The Chromium MV3 extension adds **Download with OIDM** to the context menu of links, images, audio and video. It sends only the user-selected HTTP(S) URL and a suggested filename to `oidm-native-host` through the browser's Native Messaging protocol. The host forwards the request over an OS-user-restricted local socket to the Qt desktop application, which chooses a unique filename under the user's Downloads folder.
+## Instalación portable para Windows
 
-## Chrome / Chromium / Microsoft Edge
+1. Extrae **todo** el archivo ZIP de OIDM a una carpeta. No ejecutes desde dentro del ZIP.
+2. Abre `OIDM.exe`. Desde esta versión el programa registra automáticamente en el usuario actual su host nativo para Chrome y Edge.
+3. Abre `chrome://extensions` (Chrome) o `edge://extensions` (Edge), activa **Modo de desarrollador** y selecciona **Cargar descomprimida**.
+4. Selecciona **la carpeta `extension/chromium` del nuevo ZIP**. Si había una versión anterior de OIDM, elimínala primero y vuelve a cargar la nueva extensión.
+5. Haz clic en el icono de OIDM en la barra de extensiones: debe mostrar **OIDM conectado** y la insignia `OK`.
+6. En MediaFire, abre una URL compartida y pulsa el botón de descargar normalmente. Cuando Chrome inicia una transferencia real, la extensión la pausa y se la entrega a OIDM. Si el programa no responde, Chrome la reanuda.
 
-1. Build and install both `oidm` and `oidm-native-host` (the two executables must be in the same folder for automatic application launch).
-2. Open the browser's extensions page, enable Developer mode and load the unpacked directory `extension/chromium`.
-3. Copy the extension ID shown by the browser. An unpacked Chromium extension ID consists of 32 lowercase letters in the range `a`–`p`.
-4. Run `oidm-native-host --register-chromium YOUR_EXTENSION_ID` once as the current desktop user. This creates the browser-specific Native Messaging registration files in Linux, or user-level registry entries and a host manifest on Windows.
-5. In the browser, right-click an HTTP(S) download link and choose **Descargar con OIDM**.
+### Si no conecta
 
-Do not run this registration command with sudo. The extension is not installed automatically in the browser, and the native messaging manifest is deliberately restricted to the extension ID provided by the user.
+- Cierra las instancias antiguas de OIDM y vuelve a abrir `OIDM.exe` desde la nueva carpeta.
+- Ejecuta `CONFIGURAR-INTEGRACION.cmd` dentro de la carpeta portable (no requiere Administrador).
+- En `chrome://extensions`, asegúrate de que solo tienes la nueva extensión OIDM. Pulsa su botón de **Recargar**.
+- Haz clic en su icono. Si aparece `!`, abre la notificación y revisa si el host nativo no está registrado.
 
-## Current limitations
+ID fijo de la extensión: `ciipklijloaknncdmnlnnoimjfcllohi`.
 
-- Context-menu downloads work through the native host; this is **not automatic interception** of all downloads yet.
-- Automatic media detection, video-download panels, HLS/DASH adaptation, page-link collection, and Firefox-specific registration are future work.
-- Browser restrictions and DRM-protected content are not bypassed.
-- Chrome notifications can be disabled; OIDM still stores accepted downloads.
+### Comportamiento y limitaciones
+
+La extensión intercepta automáticamente descargas HTTP/HTTPS iniciadas en el navegador (incluido MediaFire) cuando pueden pausarse. También ofrece **Descargar con OIDM** en el menú contextual. Nunca transmite contraseñas, cookies ni cabeceras de autenticación; algunos archivos privados o protegidos por sesión podrían fallar, en cuyo caso debe usarse la descarga normal del navegador. Los enlaces de página compartida de MediaFire son páginas HTML: lo que OIDM debe descargar es la URL de archivo que se genera al pulsar su botón de descarga. Los contenidos DRM no se interceptan ni se descifran.
+
+No es necesario instalar Qt ni ejecutar el host de forma permanente. Puede deshabilitarse la interceptación automática cambiando `automaticInterception` a `false` en el almacenamiento local de la extensión.

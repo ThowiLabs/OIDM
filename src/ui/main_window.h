@@ -18,7 +18,7 @@ class MainWindow final : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(DownloadRepository *repository, QWidget *parent = nullptr);
-    [[nodiscard]] bool enqueueFromBrowser(const QString &url, const QString &suggestedName,
+    [[nodiscard]] bool enqueueFromBrowser(const QString &url, const QString &suggestedName, const QString &referrer,
                                           QString *id, QString *error);
 
 protected:

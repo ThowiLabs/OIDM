@@ -9,6 +9,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QProcess>
+#include <QFileInfo>
+#include "integration/browser_extension_id.h"
+#ifdef Q_OS_WIN
+#  include <windows.h>
+#endif
 
 namespace {
 using namespace oidm;
@@ -69,16 +75,41 @@ int main(int argc, char *argv[])
     QString recoveryError;
     if (!repository.recoverInterrupted(&recoveryError)) return 3;
 
+    // Register the bundled, fixed-ID Chromium extension on every launch.
+    // Native Messaging registration is per-user and does not require UAC.
+    const QString nativeHost = QDir(QCoreApplication::applicationDirPath()).filePath(
+#ifdef Q_OS_WIN
+        QStringLiteral("oidm-native-host.exe")
+#else
+        QStringLiteral("oidm-native-host")
+#endif
+    );
+    if (QFileInfo(nativeHost).isExecutable()) {
+        QProcess registration;
+        registration.setProgram(nativeHost);
+        registration.setArguments({QStringLiteral("--register-chromium"),
+                                   QStringLiteral(OIDM_CHROMIUM_EXTENSION_ID)});
+#ifdef Q_OS_WIN
+        registration.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+            args->flags |= CREATE_NO_WINDOW;
+        });
+#endif
+        registration.start();
+        if (!registration.waitForFinished(3500) || registration.exitCode() != 0) {
+            qWarning("OIDM could not register native browser integration.");
+        }
+    }
+
     oidm::MainWindow window(&repository);
     oidm::NativeBridge bridge(&window);
     QObject::connect(&bridge, &oidm::NativeBridge::enqueueRequested, &window,
-        [&window](const QString &url, const QString &suggestedName,
+        [&window](const QString &url, const QString &suggestedName, const QString &referrer,
                   const QString &requestId, QObject *replyTarget) {
             auto *socket = qobject_cast<QLocalSocket *>(replyTarget);
             if (!socket) return;
             QString id;
             QString error;
-            const bool ok = window.enqueueFromBrowser(url, suggestedName, &id, &error);
+            const bool ok = window.enqueueFromBrowser(url, suggestedName, referrer, &id, &error);
             QJsonObject response;
             response.insert(QStringLiteral("ok"), ok);
             response.insert(QStringLiteral("requestId"), requestId);

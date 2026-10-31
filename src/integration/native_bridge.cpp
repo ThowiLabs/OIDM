@@ -84,8 +84,19 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
     const QJsonDocument document = QJsonDocument::fromJson(line, &parseError);
     const QJsonObject data = document.isObject() ? document.object() : QJsonObject{};
     const QString requestId = data.value(QStringLiteral("requestId")).toString();
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()
-        || data.value(QStringLiteral("type")).toString() != QStringLiteral("enqueue")) {
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        socket->write(response(false, requestId, QStringLiteral("Solicitud no válida.")));
+        socket->flush();
+        socket->disconnectFromServer();
+        return;
+    }
+    if (data.value(QStringLiteral("type")).toString() == QStringLiteral("ping")) {
+        socket->write(response(true, requestId, QStringLiteral("OIDM conectado")));
+        socket->flush();
+        socket->disconnectFromServer();
+        return;
+    }
+    if (data.value(QStringLiteral("type")).toString() != QStringLiteral("enqueue")) {
         socket->write(response(false, requestId, QStringLiteral("Solicitud no válida.")));
         socket->flush();
         socket->disconnectFromServer();
@@ -93,6 +104,7 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
     }
     const QString url = data.value(QStringLiteral("url")).toString();
     const QString suggestedName = data.value(QStringLiteral("suggestedName")).toString();
+    const QString referrer = data.value(QStringLiteral("referrer")).toString();
     const QUrl parsed(url);
     if (!parsed.isValid() || parsed.host().isEmpty() || !parsed.userInfo().isEmpty()
         || (parsed.scheme() != QStringLiteral("http") && parsed.scheme() != QStringLiteral("https"))) {
@@ -103,7 +115,7 @@ void NativeBridge::processLine(QLocalSocket *socket, const QByteArray &line) {
     }
     // The desktop application selects the destination. Browser-supplied paths
     // are intentionally unsupported: the extension cannot write arbitrary files.
-    emit enqueueRequested(url, suggestedName, requestId, socket);
+    emit enqueueRequested(url, suggestedName, referrer, requestId, socket);
 }
 
 } // namespace oidm

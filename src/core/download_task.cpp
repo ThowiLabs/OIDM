@@ -94,7 +94,7 @@ bool responseValidatorMatches(QNetworkReply *reply, const QString &etag, const Q
 QNetworkRequest makeRequest(const QString &url)
 {
     QNetworkRequest request{QUrl(url)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("OIDM/0.1.0"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OIDM/0.1.1"));
     request.setRawHeader(QByteArrayLiteral("Accept-Encoding"), QByteArrayLiteral("identity"));
     request.setTransferTimeout(30000);
     request.setMaximumRedirectsAllowed(10);
@@ -210,6 +210,12 @@ void DownloadTask::startRangeProbe()
     m_contentType.clear();
 
     QNetworkRequest request = makeRequest(m_download.url);
+    const QUrl referringPage(m_download.referrer);
+    if (referringPage.isValid() && !referringPage.host().isEmpty()
+        && referringPage.userInfo().isEmpty()
+        && (referringPage.scheme() == QStringLiteral("http") || referringPage.scheme() == QStringLiteral("https"))) {
+        request.setRawHeader(QByteArrayLiteral("Referer"), referringPage.toString(QUrl::FullyEncoded).toUtf8());
+    }
     request.setRawHeader(QByteArrayLiteral("Range"), QByteArrayLiteral("bytes=0-0"));
     m_probeReply = m_network->get(request);
     connect(m_probeReply, &QNetworkReply::metaDataChanged,
@@ -490,6 +496,12 @@ void DownloadTask::startSegment(const int index)
     }
 
     QNetworkRequest request = makeRequest(m_download.url);
+    const QUrl referringPage(m_download.referrer);
+    if (referringPage.isValid() && !referringPage.host().isEmpty()
+        && referringPage.userInfo().isEmpty()
+        && (referringPage.scheme() == QStringLiteral("http") || referringPage.scheme() == QStringLiteral("https"))) {
+        request.setRawHeader(QByteArrayLiteral("Referer"), referringPage.toString(QUrl::FullyEncoded).toUtf8());
+    }
     const QByteArray range = QByteArrayLiteral("bytes=") + QByteArray::number(segment.requestStart)
         + QByteArrayLiteral("-") + QByteArray::number(segment.end);
     request.setRawHeader(QByteArrayLiteral("Range"), range);
@@ -778,6 +790,12 @@ void DownloadTask::startSingleStream(const bool allowResume)
     }
 
     QNetworkRequest request = makeRequest(m_download.url);
+    const QUrl referringPage(m_download.referrer);
+    if (referringPage.isValid() && !referringPage.host().isEmpty()
+        && referringPage.userInfo().isEmpty()
+        && (referringPage.scheme() == QStringLiteral("http") || referringPage.scheme() == QStringLiteral("https"))) {
+        request.setRawHeader(QByteArrayLiteral("Referer"), referringPage.toString(QUrl::FullyEncoded).toUtf8());
+    }
     if (m_resumeOffset > 0) {
         request.setRawHeader(QByteArrayLiteral("Range"),
                              QByteArrayLiteral("bytes=") + QByteArray::number(m_resumeOffset) + QByteArrayLiteral("-"));

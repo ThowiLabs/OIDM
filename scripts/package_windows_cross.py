@@ -45,13 +45,30 @@ def main() -> None:
     shutil.copytree(repo / "extension", root / "extension")
     shutil.copy2(repo / "LICENSE", root / "LICENSE")
     shutil.copy2(repo / "README.md", root / "README.md")
+    extension_id = (repo / "extension" / "chromium" / "extension-id.txt").read_text(encoding="ascii").strip()
+    (root / "CONFIGURAR-INTEGRACION.cmd").write_text(
+        "@echo off\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        "echo Registrando la extension OIDM para Chrome y Edge...\r\n"
+        f"oidm-native-host.exe --register-chromium {extension_id}\r\n"
+        "if errorlevel 1 (\r\n"
+        "  echo ERROR: no se pudo registrar la integracion con navegador.\r\n"
+        ") else (\r\n"
+        "  echo Integracion registrada. Recarga la extension en Chrome o Edge.\r\n"
+        ")\r\n"
+        "pause\r\n",
+        encoding="ascii",
+    )
     (root / "qt.conf").write_text("[Paths]\nPlugins=plugins\n", encoding="utf-8")
     (root / "LEEME-PRIMERO.txt").write_text(
         "OIDM para Windows x64 - version de prueba\n\n"
         "1. Extrae el contenido completo del ZIP.\n"
         "2. Ejecuta OIDM.exe directamente. No necesitas instalar Qt.\n"
-        "3. En OIDM, agrega un enlace HTTP/HTTPS y selecciona la ubicacion.\n"
-        "4. Para la extension Chromium visita extension/README.md.\n\n"
+        "3. Instala la extension nueva de extension/chromium (elimina la anterior).\n"
+        "4. Haz clic en su icono: debe mostrar OIDM conectado.\n"
+        "5. Pulsa Descargar en MediaFire y observa la biblioteca OIDM.\n"
+        "6. Si no conecta, ejecuta CONFIGURAR-INTEGRACION.cmd.\n"
+        "7. Para mas detalles visita extension/README.md.\n\n"
         "Esta version preliminar no esta firmada digitalmente.\n"
         "Todavia no incluye todas las funciones de IDM.\n"
         "Si Windows muestra una alerta, revisa el editor y el archivo.\n",
