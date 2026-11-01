@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(OIDM
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Open Internet Download Manager"
     HOMEPAGE_URL "https://github.com/ThowiLabs/OIDM"
     LANGUAGES CXX
@@ -49,6 +49,8 @@ add_executable(oidm WIN32 MACOSX_BUNDLE
     src/ui/browser_setup_dialog.cpp
     src/ui/settings_dialog.h
     src/ui/settings_dialog.cpp
+    src/ui/scheduler_dialog.h
+    src/ui/scheduler_dialog.cpp
     src/ui/download_offer_dialog.h
     src/ui/download_offer_dialog.cpp
     src/ui/main_window.h

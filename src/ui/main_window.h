@@ -39,6 +39,8 @@ public slots:
 private slots:
     void showSelectedDetails();
     void openSettings();
+    void openScheduler();
+    void checkSchedule();
     void stopQueue();
     void stopAllDownloads();
     void removeCompleted();
@@ -94,6 +96,7 @@ public:
     QAction *m_copyUrlAction = nullptr;
     QAction *m_propertiesAction = nullptr;
     QAction *m_detailsAction = nullptr;
+    QAction *m_schedulerAction = nullptr;
     QLabel *m_statisticsLabel = nullptr;
 };
 

@@ -44,7 +44,8 @@ private:
     QHash<QString, DownloadTask *> m_tasks;
     bool m_shuttingDown{false};
     bool m_queueRunning{true};
-    static constexpr int MaxConcurrentDownloads = 3;
+    [[nodiscard]] int maxConcurrentDownloads() const;
+
 };
 
 } // namespace oidm

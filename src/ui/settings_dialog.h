@@ -4,6 +4,8 @@
 class QSpinBox;
 class QLineEdit;
 class QCheckBox;
+class QComboBox;
+class QSpinBox;
 
 namespace oidm {
 
@@ -17,6 +19,8 @@ public:
 private:
     void apply();
     QSpinBox *m_connections{};
+    QSpinBox *m_concurrent{};
+    QComboBox *m_theme{};
     QLineEdit *m_folder{};
 };
 

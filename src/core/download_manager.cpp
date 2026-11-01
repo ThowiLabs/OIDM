@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTimer>
+#include <QSettings>
 
 namespace oidm {
 namespace {
@@ -32,6 +33,11 @@ void cleanupTemporaryArtifacts(const Download &item)
 DownloadManager::DownloadManager(DownloadRepository *repository, QObject *parent)
     : QObject(parent), m_repository(repository) {
     qRegisterMetaType<oidm::Download>("oidm::Download");
+}
+
+int DownloadManager::maxConcurrentDownloads() const
+{
+    return qBound(1, QSettings().value(QStringLiteral("transfer/concurrentDownloads"), 3).toInt(), 16);
 }
 
 DownloadManager::~DownloadManager() {
@@ -89,7 +95,7 @@ bool DownloadManager::start(const QString &id, QString *error) {
         setError(error, tr("La descarga ya terminó o fue cancelada."));
         return false;
     }
-    if (m_tasks.size() >= MaxConcurrentDownloads) {
+    if (m_tasks.size() >= maxConcurrentDownloads()) {
         if (download.status != DownloadStatus::Queued) {
             download.status = DownloadStatus::Queued;
             download.error.clear();
@@ -166,7 +172,7 @@ void DownloadManager::startQueued() {
         return;
     }
     // Queue is returned in newest-first order. Start oldest pending item first.
-    for (auto it = downloads.crbegin(); it != downloads.crend() && m_tasks.size() < MaxConcurrentDownloads; ++it) {
+    for (auto it = downloads.crbegin(); it != downloads.crend() && m_tasks.size() < maxConcurrentDownloads(); ++it) {
         if (it->status == DownloadStatus::Queued && !m_tasks.contains(it->id)) {
             QString startError;
             if (!start(it->id, &startError)) qWarning() << "OIDM: cannot start queued item:" << startError;

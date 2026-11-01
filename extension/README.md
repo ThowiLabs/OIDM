@@ -1,6 +1,6 @@
 # OIDM — integración con Chrome / Edge
 
-**Recomendado en Windows:** instala `OIDM-Windows-x64-v0.5.0-Setup.exe`. El instalador coloca los archivos de la extensión, registra el host nativo y abre un asistente que te lleva a la página de extensiones del navegador. Chrome/Edge exige una autorización final para cargar la extensión local. No hay que copiar IDs ni ejecutar comandos.
+**Recomendado en Windows:** instala `OIDM-Windows-x64-v0.6.0-Setup.exe`. El instalador coloca los archivos de la extensión, registra el host nativo y abre un asistente que te lleva a la página de extensiones del navegador. Chrome/Edge exige una autorización final para cargar la extensión local. No hay que copiar IDs ni ejecutar comandos.
 
 
 ## Método portable alternativo para Windows
@@ -29,7 +29,7 @@ No es necesario instalar Qt ni ejecutar el host de forma permanente. Puede desha
 
 ## Instalación mediante asistente (Windows, 0.3.0)
 
-Descarga y ejecuta `OIDM-Windows-x64-v0.5.0-Setup.exe` con tu cuenta normal de Windows (no requiere Administrador). El instalador coloca OIDM y su extensión en una ruta estable, configura los accesos de inicio y registra el host nativo. En la última pantalla deja seleccionada la opción **Abrir OIDM y conectar Chrome / Edge**.
+Descarga y ejecuta `OIDM-Windows-x64-v0.6.0-Setup.exe` con tu cuenta normal de Windows (no requiere Administrador). El instalador coloca OIDM y su extensión en una ruta estable, configura los accesos de inicio y registra el host nativo. En la última pantalla deja seleccionada la opción **Abrir OIDM y conectar Chrome / Edge**.
 
 En el asistente de OIDM pulsa **Preparar y comprobar conexión**, después **Abrir Chrome** o **Abrir Edge**, habilita el modo de desarrollador y usa **Cargar descomprimida** para seleccionar la carpeta de extensión que OIDM abre o copia automáticamente al portapapeles. Es el único paso manual requerido por las restricciones de las extensiones no publicadas en Chrome Web Store / Microsoft Edge Add-ons. Al hacer clic en el icono de la extensión instalada verás un panel con el estado **OIDM conectado**.
 

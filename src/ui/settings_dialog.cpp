@@ -1,5 +1,6 @@
 #include "ui/settings_dialog.h"
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -44,6 +45,15 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
         "La interfaz permanece en modo oscuro."), general);
     text->setWordWrap(true);
     generalLayout->addWidget(text);
+    auto *themeForm = new QFormLayout();
+    m_theme = new QComboBox(general);
+    m_theme->setObjectName(QStringLiteral("settingsTheme"));
+    m_theme->addItem(tr("Clásico claro (similar al escritorio de IDM)"), QStringLiteral("classic"));
+    m_theme->addItem(tr("Oscuro OIDM"), QStringLiteral("dark"));
+    const QString savedTheme = QSettings().value(QStringLiteral("ui/theme"), QStringLiteral("classic")).toString();
+    m_theme->setCurrentIndex(qMax(0, m_theme->findData(savedTheme)));
+    themeForm->addRow(tr("Aspecto de la interfaz:"), m_theme);
+    generalLayout->addLayout(themeForm);
     generalLayout->addStretch();
     tabs->addTab(general, tr("General"));
 
@@ -56,8 +66,14 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     m_connections->setValue(preferredConnections());
     m_connections->setSuffix(tr(" conexiones"));
     connectionForm->addRow(tr("Conexiones por archivo:"), m_connections);
+    m_concurrent = new QSpinBox(connections);
+    m_concurrent->setObjectName(QStringLiteral("settingsConcurrentDownloads"));
+    m_concurrent->setRange(1, 16);
+    m_concurrent->setValue(qBound(1, QSettings().value(QStringLiteral("transfer/concurrentDownloads"), 3).toInt(), 16));
+    m_concurrent->setSuffix(tr(" archivos"));
+    connectionForm->addRow(tr("Descargas simultáneas:"), m_concurrent);
     connectionsLayout->addLayout(connectionForm);
-    auto *connectionHint = new QLabel(tr("Valor inicial: 6. Se aplica a las próximas descargas. "
+    auto *connectionHint = new QLabel(tr("Valor inicial: 6 conexiones por archivo y 3 archivos a la vez. "
         "OIDM inicia automáticamente los segmentos cuando el servidor admite rangos HTTP. "
         "Si el servidor no admite rangos, se utiliza una conexión; "
         "sin ETag/Last-Modified no se reutilizan fragmentos en otra sesión."), connections);
@@ -116,6 +132,8 @@ void SettingsDialog::apply()
     }
     QSettings settings;
     settings.setValue(QStringLiteral("transfer/maxConnections"), m_connections->value());
+    settings.setValue(QStringLiteral("transfer/concurrentDownloads"), m_concurrent->value());
+    settings.setValue(QStringLiteral("ui/theme"), m_theme->currentData().toString());
     settings.setValue(QStringLiteral("downloads/directory"), path);
     settings.sync();
     if (settings.status() != QSettings::NoError) {

@@ -107,3 +107,10 @@ Crear OIDM, un gestor de descargas original y de código abierto para Windows y 
 - Chrome/Edge MV3 popup de control y diagnóstico sin recursos propietarios IDM; últimas seis transferencias como resumen local.
 - Estado seguro `awaiting_confirmation` para separar entrega del navegador, cancelación de Chrome y aprobación del usuario; no se auto-inicia con la cola.
 - Etapas futuras: scheduler, limitador velocidad, Site Grabber, FTP, Firefox, vídeo, comparativa funcional y visual completa.
+
+## OIDM 0.6.0 (1-nov-2026)
+
+- UI clásica clara predeterminada, opcional oscuro; menús en español; tabla de 9 columnas ordenables, columnas ocultables, toolbar con iconos originales/tamaño y etiquetas configurables.
+- Programador real de una sola ejecución mientras OIDM está abierto: fecha de inicio, parada opcional y pausa de tareas activas opcional, con marca persistente de ejecución.
+- Opciones de conexiones: 6 segmentos/archivo por defecto (1–32), **archivos simultáneos configurables 1–16**, por defecto 3.
+- Sin limitar ancho de banda de forma falsa; velocidad/FTP/Grabber/Firefox todavía no implementados.

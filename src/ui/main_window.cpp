@@ -7,6 +7,7 @@
 #include "ui/download_progress_dialog.h"
 #include "ui/browser_setup_dialog.h"
 #include "ui/settings_dialog.h"
+#include "ui/scheduler_dialog.h"
 #include "ui/download_offer_dialog.h"
 #include "integration/browser_extension_id.h"
 
@@ -23,6 +24,7 @@
 #include <QUrl>
 #include <QUuid>
 #include <QHeaderView>
+#include <QActionGroup>
 #include <QKeySequence>
 #include <QLabel>
 #include <QTreeWidget>
@@ -118,6 +120,11 @@ MainWindow::MainWindow(DownloadRepository *repository, QWidget *parent)
     connect(m_model, &QAbstractItemModel::rowsRemoved, this, update);
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, update);
     updateActionStates();
+    auto *scheduleTimer = new QTimer(this);
+    scheduleTimer->setInterval(15000);
+    connect(scheduleTimer, &QTimer::timeout, this, &MainWindow::checkSchedule);
+    scheduleTimer->start();
+    checkSchedule();
     statusBar()->showMessage(tr("Listo"));
 }
 
@@ -162,22 +169,32 @@ void MainWindow::createActions()
     connect(m_openFolderAction, &QAction::triggered, this, &MainWindow::openSelectedFolder);
     m_copyUrlAction = new QAction(tr("Copiar URL"), this);
     connect(m_copyUrlAction, &QAction::triggered, this, &MainWindow::copySelectedUrl);
+    m_schedulerAction = new QAction(classicIcon(QStringLiteral("queue"), QColor(QStringLiteral("#9e88e4"))),
+        tr("Programador"), this);
+    m_schedulerAction->setObjectName(QStringLiteral("schedulerAction"));
+    connect(m_schedulerAction, &QAction::triggered, this, &MainWindow::openScheduler);
     m_propertiesAction = new QAction(tr("Propiedades"), this);
     connect(m_propertiesAction, &QAction::triggered, this, &MainWindow::showSelectedProperties);
 }
 
 void MainWindow::createMenusAndToolbar()
 {
-    QMenu *fileMenu = menuBar()->addMenu(tr("Archivo"));
+    QMenu *fileMenu = menuBar()->addMenu(tr("Tareas"));
     fileMenu->addAction(m_addAction);
+    fileMenu->addAction(m_startAction);
+    fileMenu->addAction(m_pauseAction);
+    fileMenu->addAction(m_stopAllAction);
     fileMenu->addSeparator();
     fileMenu->addAction(tr("Salir"), QKeySequence::Quit, this, &QWidget::close);
+    QMenu *filesMenu = menuBar()->addMenu(tr("Archivo"));
+    filesMenu->addActions({m_openFileAction, m_openFolderAction, m_copyUrlAction, m_propertiesAction});
 
     QMenu *downloadsMenu = menuBar()->addMenu(tr("Descargas"));
     downloadsMenu->addActions({m_addAction, m_startAction, m_startQueueAction, m_pauseAction, m_cancelAction});
     downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_stopAllAction);
     downloadsMenu->addAction(m_stopQueueAction);
+    downloadsMenu->addAction(m_schedulerAction);
     downloadsMenu->addSeparator();
     downloadsMenu->addAction(m_removeAction);
     downloadsMenu->addAction(m_deleteCompletedAction);
@@ -193,6 +210,7 @@ void MainWindow::createMenusAndToolbar()
     QMenu *toolsMenu = menuBar()->addMenu(tr("Herramientas"));
     toolsMenu->addAction(tr("Iniciar cola"), m_manager, &DownloadManager::startQueued);
     toolsMenu->addAction(m_captureAction);
+    toolsMenu->addAction(m_schedulerAction);
     toolsMenu->addAction(m_openFolderAction);
     QMenu *helpMenu = menuBar()->addMenu(tr("Ayuda"));
     helpMenu->addAction(tr("Instalar / conectar extensión Chrome y Edge..."), this,
@@ -211,7 +229,31 @@ void MainWindow::createMenusAndToolbar()
     toolbar->setObjectName(QStringLiteral("mainToolbar"));
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    toolbar->setIconSize(QSize(36, 36));
+    toolbar->setIconSize(QSize(32, 32));
+    const auto applyToolbarPreferences = [toolbar] {
+        QSettings settings;
+        const bool small = settings.value(QStringLiteral("ui/toolbarSmall"), false).toBool();
+        toolbar->setIconSize(small ? QSize(23, 23) : QSize(32, 32));
+        toolbar->setToolButtonStyle(settings.value(QStringLiteral("ui/toolbarText"), true).toBool()
+            ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly);
+    };
+    applyToolbarPreferences();
+    toolbar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(toolbar, &QToolBar::customContextMenuRequested, this, [toolbar, applyToolbarPreferences](const QPoint &where) {
+        QMenu menu(toolbar);
+        QAction *small = menu.addAction(QObject::tr("Iconos compactos"));
+        small->setCheckable(true);
+        small->setChecked(QSettings().value(QStringLiteral("ui/toolbarSmall"), false).toBool());
+        QAction *textAction = menu.addAction(QObject::tr("Mostrar texto bajo los iconos"));
+        textAction->setCheckable(true);
+        textAction->setChecked(QSettings().value(QStringLiteral("ui/toolbarText"), true).toBool());
+        QAction *selected = menu.exec(toolbar->mapToGlobal(where));
+        if (!selected) return;
+        QSettings settings;
+        if (selected == small) settings.setValue(QStringLiteral("ui/toolbarSmall"), small->isChecked());
+        if (selected == textAction) settings.setValue(QStringLiteral("ui/toolbarText"), textAction->isChecked());
+        applyToolbarPreferences();
+    });
     m_addAction->setText(tr("Agregar URL"));
     m_startAction->setText(tr("Reanudar"));
     m_startQueueAction->setText(tr("Iniciar cola"));
@@ -227,6 +269,7 @@ void MainWindow::createMenusAndToolbar()
     toolbar->addSeparator();
     toolbar->addAction(m_startQueueAction);
     toolbar->addAction(m_stopQueueAction);
+    toolbar->addAction(m_schedulerAction);
     toolbar->addSeparator();
     toolbar->addAction(m_captureAction);
     toolbar->addSeparator();
@@ -312,6 +355,24 @@ void MainWindow::createCentralLayout()
     m_table->verticalHeader()->hide();
     m_table->verticalHeader()->setDefaultSectionSize(30);
     m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setSectionsMovable(true);
+    m_table->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table->horizontalHeader(), &QHeaderView::customContextMenuRequested,
+        this, [this](const QPoint &pos) {
+            QMenu menu(this);
+            auto *header = m_table->horizontalHeader();
+            for (int col = 0; col < DownloadTableModel::ColumnCount; ++col) {
+                QAction *action = menu.addAction(m_model->headerData(col, Qt::Horizontal, Qt::DisplayRole).toString());
+                action->setCheckable(true);
+                action->setChecked(!header->isSectionHidden(col));
+                action->setEnabled(col != DownloadTableModel::Name); // Always leave a navigable name.
+                connect(action, &QAction::toggled, this, [this, col](bool enabled) {
+                    m_table->setColumnHidden(col, !enabled);
+                    QSettings().setValue(QStringLiteral("ui/hiddenColumn%1").arg(col), !enabled);
+                });
+            }
+            menu.exec(header->mapToGlobal(pos));
+        });
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Name, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Queue, QHeaderView::Fixed);
     m_table->setColumnWidth(DownloadTableModel::Queue, 32);
@@ -323,6 +384,10 @@ void MainWindow::createCentralLayout()
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Remaining, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Source, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(DownloadTableModel::Date, QHeaderView::ResizeToContents);
+    for (int col = 1; col < DownloadTableModel::ColumnCount; ++col) {
+        m_table->setColumnHidden(col,
+            QSettings().value(QStringLiteral("ui/hiddenColumn%1").arg(col), false).toBool());
+    }
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table, &QTableView::customContextMenuRequested, this, [this](const QPoint &pos) {
         const QModelIndex clicked = m_table->indexAt(pos);
@@ -353,7 +418,7 @@ void MainWindow::createCentralLayout()
         });
     split->addWidget(m_categories);
     split->addWidget(panel);
-    split->setSizes({210, 980});
+    split->setSizes({175, 1045});
     layout->addWidget(split, 1);
     auto *footer = new QLabel(tr("●  MOTOR LISTO     ·     C++20 / Qt 6     ·     Descargas HTTP/HTTPS y conexiones segmentadas"), central);
     footer->setObjectName(QStringLiteral("footerNote"));
@@ -363,6 +428,51 @@ void MainWindow::createCentralLayout()
 
 void MainWindow::applyStyle()
 {
+    const bool classic = QSettings().value(QStringLiteral("ui/theme"), QStringLiteral("classic")).toString()
+        != QStringLiteral("dark");
+    // Classic Windows IDM places the table immediately below the toolbar;
+    // only the alternate OIDM theme keeps its large section/footer labels.
+    if (auto *heading = findChild<QLabel *>(QStringLiteral("sectionHeading"))) heading->setVisible(!classic);
+    if (auto *footer = findChild<QLabel *>(QStringLiteral("footerNote"))) footer->setVisible(!classic);
+    if (classic) {
+        // Light Windows desktop layout based on standard native Qt widgets.
+        // No proprietary IDM fonts, images, resources or executable code.
+        setStyleSheet(QStringLiteral(
+            "QMainWindow, QDialog { background: #f3f3f3; color: #242424; }"
+            "QWidget#mainContent { background: #fbfbfb; }"
+            "QMenuBar { background: #f4f4f4; color: #202020; border-bottom: 1px solid #c8c8c8; padding: 1px 2px; }"
+            "QMenuBar::item { padding: 4px 8px; }"
+            "QMenuBar::item:selected, QMenu::item:selected { background: #d9e9fb; color: #162e4d; }"
+            "QMenu { background: #fff; color: #202020; border: 1px solid #c0c0c0; }"
+            "QMenu::item { padding: 6px 22px; }"
+            "QToolBar#mainToolbar { background: #f6f6f6; color: #222; border: none; border-bottom: 1px solid #c5c5c5; spacing: 2px; padding: 5px 7px; }"
+            "QToolBar::separator { background: #c5c5c5; width: 1px; margin: 7px 6px; }"
+            "QToolButton { color: #252525; background: transparent; padding: 4px 5px; border: 1px solid transparent; border-radius: 2px; min-width: 60px; }"
+            "QToolButton:hover { background: #e1ebf7; border: 1px solid #abc7df; }"
+            "QToolButton:pressed { background: #cadcf0; }"
+            "QTreeWidget#categories { color: #252525; background: #fff; border: 1px solid #c4c4c4; outline: 0; }"
+            "QTreeWidget#categories::item { padding: 3px 2px; min-height: 19px; }"
+            "QTreeWidget#categories::item:selected { background: #d0e6fb; color: #1a3656; }"
+            "QTreeWidget#categories::item:hover { background: #edf3fb; }"
+            "QHeaderView::section { color: #292929; background: #f4f4f4; border: none; border-right: 1px solid #d4d4d4; border-bottom: 1px solid #bebebe; padding: 6px 7px; font-weight: 500; }"
+            "QTableView#downloadsTable { color: #242424; background: #fff; alternate-background-color: #f8f8f8; border: 1px solid #bfbfbf; selection-background-color: #cbe2fa; selection-color: #112d50; outline: 0; }"
+            "QTableView#downloadsTable::item { padding: 2px 5px; border-bottom: 1px solid #f0f0f0; }"
+            "QTableView#downloadsTable::item:hover { background: #edf4fa; }"
+            "QLabel#sectionHeading { color: #4c617a; font-size: 11px; font-weight: 600; padding: 3px; }"
+            "QLabel#footerNote { color: #646464; background: #f4f4f4; padding: 5px 7px; border: 1px solid #e1e1e1; }"
+            "QStatusBar { color: #404040; background: #f5f5f5; border-top: 1px solid #d3d3d3; padding: 2px; }"
+            "QLabel#downloadStatistics { color: #4a6076; font-size: 11px; margin-right: 7px; }"
+            "QSplitter::handle { background: #d6d6d6; width: 4px; }"
+            "QScrollBar { background: #f6f6f6; }"
+            "QScrollBar::handle { background: #c6c6c6; border-radius: 2px; min-height: 18px; min-width: 11px; }"
+            "QPushButton { color: #242424; background: #f7f7f7; border: 1px solid #bfbfbf; border-radius: 3px; padding: 6px 12px; }"
+            "QPushButton:hover { background: #e8f2fc; }"
+            "QLineEdit, QTabWidget::pane, QTableWidget { color: #242424; background: #fff; border: 1px solid #bdbdbd; }"
+            "QProgressBar { color: #1f1f1f; background: #ededed; border: 1px solid #bfbfbf; text-align: center; }"
+            "QProgressBar::chunk { background: #6aafdc; }"
+        ));
+        return;
+    }
     setStyleSheet(QStringLiteral(
         "QMainWindow, QDialog { background: #171b22; color: #e2e8f0; }"
         "QWidget#mainContent { background: #171b22; }"
@@ -468,7 +578,48 @@ void MainWindow::toggleBrowserCapture()
 void MainWindow::openSettings()
 {
     SettingsDialog dialog(this);
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted) {
+        applyStyle();
+        updateActionStates();
+    }
+}
+
+void MainWindow::openScheduler()
+{
+    SchedulerDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        checkSchedule();
+        statusBar()->showMessage(tr("Programación actualizada."), 5000);
+    }
+}
+
+void MainWindow::checkSchedule()
+{
+    QSettings settings;
+    if (!settings.value(QStringLiteral("scheduler/enabled"), false).toBool()) return;
+    const QDateTime start = settings.value(QStringLiteral("scheduler/start")).toDateTime();
+    if (!start.isValid()) return;
+    const QDateTime now = QDateTime::currentDateTime();
+    const QString fingerprint = start.toString(Qt::ISODate);
+    const bool hasStop = settings.value(QStringLiteral("scheduler/hasStop"), false).toBool();
+    const QDateTime stop = settings.value(QStringLiteral("scheduler/stop")).toDateTime();
+    if (now < start) {
+        // Don't start queued transfers before the requested schedule.
+        m_manager->stopQueue();
+        return;
+    }
+    if (hasStop && stop.isValid() && now >= stop) {
+        if (settings.value(QStringLiteral("scheduler/stopFired")).toString() == fingerprint) return;
+        m_manager->stopQueue();
+        if (settings.value(QStringLiteral("scheduler/pauseAtStop"), false).toBool()) m_manager->pauseAll();
+        settings.setValue(QStringLiteral("scheduler/stopFired"), fingerprint);
+        statusBar()->showMessage(tr("Programador: cola detenida según el horario."), 7000);
+        return;
+    }
+    if (settings.value(QStringLiteral("scheduler/startFired")).toString() == fingerprint) return;
+    m_manager->startQueued();
+    settings.setValue(QStringLiteral("scheduler/startFired"), fingerprint);
+    statusBar()->showMessage(tr("Programador: cola iniciada según el horario."), 7000);
 }
 
 void MainWindow::showOffer(const Download &download)

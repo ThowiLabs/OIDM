@@ -89,3 +89,10 @@ Crear extensiones WebExtensions para Chromium y Firefox y un Native Messaging Ho
 - Comandos para abrir archivo/carpeta, copiar enlace, propiedades y limpiar historial; ordenación por columnas.
 - Nuevo estado `awaiting_confirmation` evita que `startQueued()` o el botón Iniciar lancen una reserva de Chrome antes de su cancelación y la confirmación del usuario.
 - Pendiente: publicación oficial de extensión para instalación con tienda, compatibilidad Firefox, funciones avanzadas de IDM y verificación con MediaFire real en un Chrome Windows.
+
+## 0.6.0 UI y programación (1-nov-2026)
+
+- Modo clásico claro con alternancia oscuro; diálogos y menús en español, iconos propios.
+- Programador de cola puntual con iniciar/detener y opción de pausar descargas activas; requiere OIDM abierto.
+- Desempeño configurable: 1–16 descargas de archivos simultáneas y 1–32 rangos por archivo, 6 por defecto.
+- Clic derecho encabezados para mostrar/ocultar columnas, clic derecho toolbar para tamaño/etiquetas, preferencias persistentes.

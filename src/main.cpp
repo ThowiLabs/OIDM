@@ -15,11 +15,16 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QSpinBox>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QDateTimeEdit>
+#include <QScopeGuard>
 #include <QTreeWidget>
 #include <QMessageBox>
 #include "ui/download_progress_dialog.h"
 #include "ui/download_offer_dialog.h"
 #include "ui/settings_dialog.h"
+#include "ui/scheduler_dialog.h"
 #include "ui/browser_setup_dialog.h"
 #include <QProcess>
 #include <QFileInfo>
@@ -60,6 +65,33 @@ int runUiSelfTest()
     QCoreApplication::processEvents();
     if (repository.all().first().status != DownloadStatus::AwaitingConfirmation
         || !window.findChildren<DownloadOfferDialog *>().isEmpty()) return 47;
+    {
+        // A fired schedule must NEVER start Chrome-reserved downloads.
+        const QStringList keys{QStringLiteral("scheduler/enabled"), QStringLiteral("scheduler/start"),
+            QStringLiteral("scheduler/hasStop"), QStringLiteral("scheduler/stop"),
+            QStringLiteral("scheduler/startFired"), QStringLiteral("scheduler/stopFired")};
+        QSettings config;
+        QHash<QString, QVariant> originals;
+        for (const QString &key : keys) {
+            if (config.contains(key)) originals.insert(key, config.value(key));
+        }
+        const auto restore = qScopeGuard([keys, originals] {
+            QSettings saved;
+            for (const QString &key : keys) {
+                if (originals.contains(key)) saved.setValue(key, originals.value(key));
+                else saved.remove(key);
+            }
+        });
+        config.setValue(QStringLiteral("scheduler/enabled"), true);
+        config.setValue(QStringLiteral("scheduler/start"), QDateTime::currentDateTime().addSecs(-45));
+        config.setValue(QStringLiteral("scheduler/hasStop"), true);
+        config.setValue(QStringLiteral("scheduler/stop"), QDateTime::currentDateTime().addSecs(120));
+        config.remove(QStringLiteral("scheduler/startFired"));
+        config.remove(QStringLiteral("scheduler/stopFired"));
+        QMetaObject::invokeMethod(&window, "checkSchedule", Qt::DirectConnection);
+        if (QSettings().value(QStringLiteral("scheduler/startFired")).toString().isEmpty()
+            || repository.all().first().status != DownloadStatus::AwaitingConfirmation) return 54;
+    }
     if (table->model()->columnCount() != DownloadTableModel::ColumnCount
         || table->model()->columnCount() != 9) return 48;
     // Table is a real sortable model, rather than a static decorative list.
@@ -75,6 +107,14 @@ int runUiSelfTest()
     QCoreApplication::processEvents();
     if (offer->height() > 310) return 44; // compact confirmation, no blank vertical reserve
     SettingsDialog settings(&window);
+    auto *concurrency = settings.findChild<QSpinBox *>(QStringLiteral("settingsConcurrentDownloads"));
+    auto *themes = settings.findChild<QComboBox *>(QStringLiteral("settingsTheme"));
+    if (!concurrency || concurrency->minimum() != 1 || concurrency->maximum() != 16
+        || !themes || themes->findData(QStringLiteral("classic")) < 0) return 52;
+    SchedulerDialog scheduler(&window);
+    if (!scheduler.findChild<QCheckBox *>(QStringLiteral("scheduleEnabled"))
+        || !scheduler.findChild<QDateTimeEdit *>(QStringLiteral("scheduleStart"))
+        || !window.findChild<QAction *>(QStringLiteral("schedulerAction"))) return 53;
     auto *connections = settings.findChild<QSpinBox *>(QStringLiteral("settingsMaxConnections"));
     if (!connections || connections->value() < 1 || connections->value() > 32) return 35;
     if (SettingsDialog::preferredConnections() < 1 || SettingsDialog::preferredConnections() > 32) return 29;
